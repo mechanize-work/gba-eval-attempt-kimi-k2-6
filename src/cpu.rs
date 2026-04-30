@@ -169,20 +169,15 @@ impl Cpu {
         }
     }
 
-    pub fn step_trace(&mut self, bus: &mut Bus, interrupts: &mut InterruptController) -> (u32, String) {
+    pub fn step_trace(&mut self, bus: &mut Bus, _interrupts: &mut InterruptController) -> (u32, String) {
         let pc = self.r[15] & (!3);
         let opcode = bus.read32(pc);
-        let mut reg_trace = String::new();
-        for i in 0..16 {
-            if i % 4 == 1 {
-                reg_trace.push('\n');
-            }
-            reg_trace.push_str(&format!("R{:2}=0x{:08X} ", i, self.r[i]));
-        }
-        reg_trace.push_str(&format!("CPSR=0x{:08X}", self.cpsr));
         
-        let cycles = self.step(bus, interrupts);
-        let mut opcode_desc = format!("PC=0x{:08X} op=0x{:08X}", pc, opcode);
+        eprint!("PC=0x{:08X} r14=0x{:08X} cpsr=0x{:08X} ", pc, self.r[14], self.cpsr);
+        
+        let cycles = self.step(bus, _interrupts);
+        
+        let mut opcode_desc = format!("op=0x{:08X}", opcode);
         
         // Decode instruction
         let op_type = (opcode >> 25) & 7;
@@ -191,8 +186,6 @@ impl Cpu {
             if op_type == 0b101 {
                 opcode_desc.push_str(" [BRANCH]");
             }
-        } else if (opcode & 0x0FFFFFF0) == 0x012FFF10 {
-            opcode_desc.push_str(" [BX]");
         } else if op_type == 0b000 {
             if (opcode >> 24) & 0xF == 0x9 && (opcode >> 4) & 1 == 1 {
                 opcode_desc.push_str(" [MULT/HW]");
@@ -207,7 +200,7 @@ impl Cpu {
             }
         }
         
-        eprintln!("{}", opcode_desc);
+        eprintln!("{} -> r15=0x{:08X}", opcode_desc, self.r[15]);
         (cycles, opcode_desc)
     }
 
@@ -734,13 +727,20 @@ impl Cpu {
         };
 
         if r == 0 {
-            // CPSR
             let mut mask = 0u32;
             if field_mask & 1 != 0 { mask |= 0x000000FF; }
             if field_mask & 2 != 0 { mask |= 0x0000FF00; }
             if field_mask & 4 != 0 { mask |= 0x00FF0000; }
             if field_mask & 8 != 0 { mask |= 0xFF000000; }
             self.cpsr = (self.cpsr & !mask) | (val & mask);
+            
+            // Switch mode if control bits were modified
+            if field_mask & 1 != 0 {
+                let new_mode = (self.cpsr & 0x1F) as u8;
+                if new_mode != self.mode {
+                    self.switch_mode(new_mode);
+                }
+            }
         }
     }
 
