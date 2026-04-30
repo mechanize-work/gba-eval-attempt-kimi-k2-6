@@ -3,10 +3,6 @@ name = "gba_emu"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "test_emu"
-path = "src/bin/test_emu.rs"
-
 [lib]
 crate-type = ["cdylib", "rlib"]
 

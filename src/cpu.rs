@@ -990,7 +990,7 @@ impl Cpu {
                 } else {
                     // Block transfer
                     let n = (opcode & 0xFFFF).count_ones();
-                    (n + n - 1)
+                    n.saturating_sub(1) + n
                 }
             }
             _ => 1,
