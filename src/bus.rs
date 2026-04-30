@@ -2,31 +2,29 @@ pub struct Bus {
     bios: [u8; 0x4000],
     ewram: [u8; 0x40000],
     iwram: [u8; 0x8000],
-    rom: Vec<u8>,
     io: [u8; 0x400],
     palette: [u8; 0x400],
     vram: [u8; 0x18000],
     oam: [u8; 0x400],
+    rom: Vec<u8>,
 }
 
 impl Bus {
     pub fn new() -> Self {
+        let bios_data = include_bytes!("../spec/gba_bios_stub.bin");
         let mut bios = [0u8; 0x4000];
-        // Load BIOS stub
-        if let Ok(data) = std::fs::read("spec/gba_bios_stub.bin") {
-            let len = data.len().min(0x4000);
-            bios[..len].copy_from_slice(&data[..len]);
-        }
+        let len = bios_data.len().min(0x4000);
+        bios[..len].copy_from_slice(&bios_data[..len]);
         
         Bus {
             bios,
             ewram: [0; 0x40000],
             iwram: [0; 0x8000],
-            rom: vec![0; 32 * 1024 * 1024],
             io: [0; 0x400],
             palette: [0; 0x400],
             vram: [0; 0x18000],
             oam: [0; 0x400],
+            rom: vec![0; 32 * 1024 * 1024],
         }
     }
 
@@ -45,17 +43,15 @@ impl Bus {
     }
 
     pub fn read8(&self, addr: u32) -> u8 {
-        match addr & 0x0F000000 {
+        match addr & 0xFF000000 {
             0x00000000 => self.bios[(addr & 0x3FFF) as usize],
             0x02000000 => self.ewram[(addr & 0x3FFFF) as usize],
             0x03000000 => self.iwram[(addr & 0x7FFF) as usize],
             0x04000000 => self.io[(addr & 0x3FF) as usize],
             0x05000000 => self.palette[(addr & 0x3FF) as usize],
-            0x06000000 => self.vram[(addr & 0x1FFFF) as usize % 0x18000],
+            0x06000000 => self.vram[((addr & 0x1FFFF) as usize) % 0x18000],
             0x07000000 => self.oam[(addr & 0x3FF) as usize],
-            0x08000000 | 0x09000000 | 0x0A000000 | 0x0B000000 | 0x0C000000 | 0x0D000000 => {
-                self.rom[(addr & 0x1FFFFFF) as usize % self.rom.len()]
-            }
+            0x08000000..=0x0D000000 => self.rom[((addr & 0x1FFFFFF) as usize) % self.rom.len()],
             0x0E000000 | 0x0F000000 => 0,
             _ => 0,
         }
@@ -68,25 +64,18 @@ impl Bus {
 
     pub fn read32(&self, addr: u32) -> u32 {
         let a = addr & !3;
-        u32::from_le_bytes([
-            self.read8(a),
-            self.read8(a + 1),
-            self.read8(a + 2),
-            self.read8(a + 3),
-        ])
+        u32::from_le_bytes([self.read8(a), self.read8(a + 1), self.read8(a + 2), self.read8(a + 3)])
     }
 
     pub fn write8(&mut self, addr: u32, val: u8) {
-        match addr & 0x0F000000 {
-            0x00000000 => {},
+        match addr & 0xFF000000 {
+            0x00000000 => {}, // BIOS read-only
             0x02000000 => self.ewram[(addr & 0x3FFFF) as usize] = val,
             0x03000000 => self.iwram[(addr & 0x7FFF) as usize] = val,
-            0x04000000 => self.io_write8(addr, val),
+            0x04000000 => self.io_write8(addr & 0x3FF, val),
             0x05000000 => self.palette[(addr & 0x3FF) as usize] = val,
-            0x06000000 => self.vram[(addr & 0x1FFFF) as usize % 0x18000] = val,
+            0x06000000 => self.vram[((addr & 0x1FFFF) as usize) % 0x18000] = val,
             0x07000000 => self.oam[(addr & 0x3FF) as usize] = val,
-            0x08000000..=0x0D000000 => {},
-            0x0E000000 | 0x0F000000 => {},
             _ => {},
         }
     }
@@ -106,6 +95,7 @@ impl Bus {
     }
 
     fn io_write8(&mut self, addr: u32, val: u8) {
-        self.io[(addr & 0x3FF) as usize] = val;
+        let offset = addr as usize;
+        self.io[offset] = val;
     }
 }
