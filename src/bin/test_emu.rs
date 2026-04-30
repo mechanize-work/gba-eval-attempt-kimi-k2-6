@@ -1,5 +1,6 @@
 use gba_emu::*;
 use std::fs;
+use std::time::Instant;
 
 fn main() {
     emu_init();
@@ -10,40 +11,38 @@ fn main() {
     }
     emu_load_rom(rom_data.len() as i32);
     
-    for frame in 0..600 {
-        emu_run_frame();
-    }
+    let start = Instant::now();
+    let mut frames = 0;
+    let mut check_interval = 100;
     
-    // Check framebuffer
-    let fb = emu_framebuffer();
-    let mut black = 0;
-    let mut white = 0;
-    let mut other = 0;
-    unsafe {
-        for i in 0..(240 * 160) {
-            let p = *fb.offset(i as isize);
-            if p == 0xFF000000 { black += 1; }
-            else if p == 0xFFFFFFFF { white += 1; }
-            else { other += 1; }
+    loop {
+        for _ in 0..check_interval {
+            emu_run_frame();
+            frames += 1;
+        }
+        
+        let fb = emu_framebuffer();
+        let mut non_black = 0;
+        unsafe {
+            for i in 0..(240 * 160) {
+                if *fb.offset(i as isize) != 0xFF000000 {
+                    non_black += 1;
+                }
+            }
+        }
+        
+        if non_black > 1000 {
+            println!("Found {} non-black pixels at frame {} in {:?}", non_black, frames, start.elapsed());
+            break;
+        }
+        
+        if frames >= 20000 {
+            println!("No display after 20000 frames in {:?}", start.elapsed());
+            break;
+        }
+        
+        if frames % 1000 == 0 {
+            println!("{} frames... elapsed {:?}", frames, start.elapsed());
         }
     }
-    println!("After 600 frames: black={}, white={}, other={}", black, white, other);
-    
-    // Run for another 600
-    for frame in 0..600 {
-        emu_run_frame();
-    }
-    
-    let mut black = 0;
-    let mut white = 0;
-    let mut other = 0;
-    unsafe {
-        for i in 0..(240 * 160) {
-            let p = *fb.offset(i as isize);
-            if p == 0xFF000000 { black += 1; }
-            else if p == 0xFFFFFFFF { white += 1; }
-            else { other += 1; }
-        }
-    }
-    println!("After 1200 frames: black={}, white={}, other={}", black, white, other);
 }

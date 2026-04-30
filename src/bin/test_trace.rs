@@ -9,21 +9,16 @@ fn main() {
         std::ptr::copy_nonoverlapping(rom_data.as_ptr(), rom_buffer, rom_data.len());
     }
     emu_load_rom(rom_data.len() as i32);
-    
-    // Trace first 50 steps
-    for i in 0..50 {
-        let pc_before = emu_debug_pc();
-        emu_debug_step_trace();
-        let pc_after = emu_debug_pc();
-        
-        if pc_after == pc_before {
-            println!("STUCK at step {} PC=0x{:08X}", i, pc_after);
-            break;
+
+    // Step through entire frame multiple times
+    for frame in 0..10 {
+        for step in 0..5000 {
+            emu_debug_step_trace();
+            // break if pc goes to BIOS
+            if emu_debug_pc() >= 0x08000000 && emu_debug_pc() < 0x0D000000 {
+                // in ROM space
+            }
         }
-        
-        if i > 30 && pc_after < 0x08000000 {
-            println!("BIOS loop at step {} PC=0x{:08X}", i, pc_after);
-            break;
-        }
+        println!("--- frame {} done ---", frame);
     }
 }
