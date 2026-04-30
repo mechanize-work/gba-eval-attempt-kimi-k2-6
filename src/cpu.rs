@@ -1,76 +1,160 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 use crate::bus::Bus;
 use crate::interrupt::InterruptController;
 
 pub struct Cpu {
     r: [u32; 16],
     cpsr: u32,
-    spsr: u32,
-    banked_regs: [[u32; 7]; 5],
-    banked_spsr: [u32; 5],
     mode: u8,
     thumb: bool,
     halt: bool,
-    pipeline: [u32; 3],
-    pipeline_valid: [bool; 3],
+    reg_bank: RegBank,
 }
+
+struct RegBank {
+    fiq_r8_r14: [u32; 7],
+    irq_r13_r14: [u32; 2],
+    svc_r13_r14: [u32; 2],
+    abt_r13_r14: [u32; 2],
+    und_r13_r14: [u32; 2],
+    spsr: [u32; 5], // fiq=0, irq=1, svc=2, abt=3, und=4
+}
+
+const MODE_USER: u32 = 0x10;
+const MODE_FIQ: u32 = 0x11;
+const MODE_IRQ: u32 = 0x12;
+const MODE_SVC: u32 = 0x13;
+const MODE_ABT: u32 = 0x17;
+const MODE_UND: u32 = 0x1B;
+const MODE_SYS: u32 = 0x1F;
 
 impl Cpu {
     pub fn new() -> Self {
         Cpu {
             r: [0; 16],
-            cpsr: 0x1F,
-            spsr: 0,
-            banked_regs: [[0; 7]; 5],
-            banked_spsr: [0; 5],
-            mode: 0x1F,
+            cpsr: MODE_SYS,
+            mode: MODE_SYS as u8,
             thumb: false,
             halt: false,
-            pipeline: [0; 3],
-            pipeline_valid: [false; 3],
+            reg_bank: RegBank {
+                user: [0; 7], fiq: [0; 7], irq: [0; 2], svc: [0; 2],
+                abt: [0; 2], und: [0; 2], spsr: [0; 5],
+            },
         }
     }
 
     pub fn reset(&mut self) {
         self.r = [0; 16];
-        self.cpsr = 0x1F | (1 << 7) | (1 << 6); // System mode, IRQ & FIQ disabled
-        self.spsr = 0;
-        self.banked_regs = [[0; 7]; 5];
-        self.banked_spsr = [0; 5];
+        self.cpsr = 0x1F | (1 << 7) | (1 << 6);
         self.mode = 0x1F;
         self.thumb = false;
         self.halt = false;
-        self.pipeline = [0; 3];
-        self.pipeline_valid = [false; 3];
-        
-        // Set PC to BIOS reset vector
+        self.reg_bank = RegBank {
+            fiq_r8_r14: [0; 7], irq_r13_r14: [0; 2], svc_r13_r14: [0; 2],
+            abt_r13_r14: [0; 2], und_r13_r14: [0; 2], spsr: [0; 5],
+        };
         self.r[15] = 0x00000000;
-        
-        // Initialize pipeline
-        self.pipeline[0] = 0;
-        self.pipeline[1] = 0;
-        self.pipeline[2] = 0;
-        self.pipeline_valid = [true, true, false];
     }
 
     pub fn irq_disabled(&self) -> bool {
         (self.cpsr >> 7) & 1 != 0
     }
 
-    pub fn trigger_irq(&mut self, bus: &mut Bus) {
-        // Switch to IRQ mode
+    pub fn trigger_irq(&mut self, _bus: &mut Bus) {
         let old_mode = self.mode;
-        self.switch_mode(0x12);
-        self.banked_spsr[(old_mode >> 0) as usize] = self.cpsr;
-        self.cpsr = (self.cpsr & !0x1F) | 0x12 | (1 << 7);
+        let old_cpsr = self.cpsr;
+        self.switch_mode(MODE_IRQ as u8);
+        self.cpsr = (self.cpsr & !0x1F) | MODE_IRQ | (1 << 7);
         self.thumb = false;
         self.r[14] = self.r[15] + 4;
         self.r[15] = 0x00000018;
-        self.pipeline_valid = [false, false, false];
     }
 
     fn switch_mode(&mut self, new_mode: u8) {
-        // Bank register switching would go here
+        let old_mode = self.mode;
+        let old_spsr_idx = spsr_idx(old_mode);
+        let new_spsr_idx = spsr_idx(new_mode);
+
+        if old_mode == MODE_FIQ as u8 || new_mode == MODE_FIQ as u8 {
+            // All banked regs change
+            self.save_bank(old_mode);
+            self.restore_bank(new_mode);
+        } else if old_mode != new_mode {
+            // Only R13/R14 change
+            if old_mode != MODE_USER as u8 && old_mode != MODE_SYS as u8 {
+                let idx = bank_idx(old_mode);
+                match idx {
+                    1 => { self.reg_bank.irq_r13_r14[0] = self.r[13]; self.reg_bank.irq_r13_r14[1] = self.r[14]; }
+                    2 => { self.reg_bank.svc_r13_r14[0] = self.r[13]; self.reg_bank.svc_r13_r14[1] = self.r[14]; }
+                    3 => { self.reg_bank.abt_r13_r14[0] = self.r[13]; self.reg_bank.abt_r13_r14[1] = self.r[14]; }
+                    4 => { self.reg_bank.und_r13_r14[0] = self.r[13]; self.reg_bank.und_r13_r14[1] = self.r[14]; }
+                    _ => {}
+                }
+            }
+            if new_mode != MODE_USER as u8 && new_mode != MODE_SYS as u8 {
+                let idx = bank_idx(new_mode);
+                match idx {
+                    1 => { self.r[13] = self.reg_bank.irq_r13_r14[0]; self.r[14] = self.reg_bank.irq_r13_r14[1]; }
+                    2 => { self.r[13] = self.reg_bank.svc_r13_r14[0]; self.r[14] = self.reg_bank.svc_r13_r14[1]; }
+                    3 => { self.r[13] = self.reg_bank.abt_r13_r14[0]; self.r[14] = self.reg_bank.abt_r13_r14[1]; }
+                    4 => { self.r[13] = self.reg_bank.und_r13_r14[0]; self.r[14] = self.reg_bank.und_r13_r14[1]; }
+                    _ => {}
+                }
+            }
+        }
         self.mode = new_mode;
+    }
+
+    fn save_bank(&mut self, mode: u8) {
+        match mode {
+            m if m == MODE_FIQ as u8 => {
+                for i in 0..7 { self.reg_bank.fiq[i] = self.r[8 + i]; }
+            }
+            m if m == MODE_IRQ as u8 => {
+                self.reg_bank.irq[0] = self.r[13];
+                self.reg_bank.irq[1] = self.r[14];
+            }
+            m if m == MODE_SVC as u8 => {
+                self.reg_bank.svc[0] = self.r[13];
+                self.reg_bank.svc[1] = self.r[14];
+            }
+            m if m == MODE_ABT as u8 => {
+                self.reg_bank.abt[0] = self.r[13];
+                self.reg_bank.abt[1] = self.r[14];
+            }
+            m if m == MODE_UND as u8 => {
+                self.reg_bank.und[0] = self.r[13];
+                self.reg_bank.und[1] = self.r[14];
+            }
+            _ => {}
+        }
+    }
+
+    fn restore_bank(&mut self, mode: u8) {
+        match mode {
+            m if m == MODE_FIQ as u8 => {
+                for i in 0..7 { self.r[8 + i] = self.reg_bank.fiq[i]; }
+            }
+            m if m == MODE_IRQ as u8 => {
+                self.r[13] = self.reg_bank.irq[0];
+                self.r[14] = self.reg_bank.irq[1];
+            }
+            m if m == MODE_SVC as u8 => {
+                self.r[13] = self.reg_bank.svc[0];
+                self.r[14] = self.reg_bank.svc[1];
+            }
+            m if m == MODE_ABT as u8 => {
+                self.r[13] = self.reg_bank.abt[0];
+                self.r[14] = self.reg_bank.abt[1];
+            }
+            m if m == MODE_UND as u8 => {
+                self.r[13] = self.reg_bank.und[0];
+                self.r[14] = self.reg_bank.und[1];
+            }
+            _ => {}
+        }
     }
 
     pub fn step(&mut self, bus: &mut Bus, interrupts: &mut InterruptController) -> u32 {
@@ -79,46 +163,182 @@ impl Cpu {
         }
 
         if self.thumb {
-            self.step_thumb(bus, interrupts)
+            self.step_thumb(bus)
         } else {
-            self.step_arm(bus, interrupts)
+            self.step_arm(bus)
         }
     }
 
-    fn step_arm(&mut self, bus: &mut Bus, _interrupts: &mut InterruptController) -> u32 {
+    fn step_arm(&mut self, bus: &mut Bus) -> u32 {
         let pc = self.r[15] & !3;
         let opcode = bus.read32(pc);
         self.r[15] = pc + 4;
 
         let cond = (opcode >> 28) & 0xF;
         if !self.check_condition(cond) {
-            return 1;
+            return self.arm_cycles(opcode);
         }
 
-        let inst_type = (opcode >> 26) & 0x3;
-        match inst_type {
-            0b00 => self.execute_data_processing(opcode, bus),
-            0b01 => self.execute_load_store(opcode, bus),
-            0b10 => self.execute_branch_block(opcode, bus),
-            0b11 => self.execute_coprocessor(opcode, bus),
-            _ => {}
+        let bits2526 = (opcode >> 25) & 0x7;
+        let bit27 = (opcode >> 27) & 1;
+
+        if bit27 == 1 {
+            if bits2526 & 6 == 4 { // Branch/link
+                self.execute_branch(opcode);
+            } else if bits2526 & 6 == 6 { // SWI
+                self.execute_swi(opcode, bus);
+            }
+        } else if bits2526 == 0 {
+            if (opcode >> 24) & 0xF == 0x9 && (opcode >> 4) & 1 == 1 {
+                // Multiply or LDRH/STRH
+                if (opcode >> 5) & 3 == 0 && (opcode >> 22) & 1 == 0 {
+                    self.execute_multiply(opcode);
+                } else {
+                    self.execute_halfword_transfer(opcode, bus);
+                }
+            } else if (opcode >> 21) & 1 == 1 && (opcode >> 23) & 3 == 2 && (opcode >> 24) & 1 == 0 {
+                // MSR
+                self.execute_msr(opcode);
+            } else if (opcode >> 22) & 3 == 2 && (opcode >> 20) & 1 == 0 {
+                // MRS
+                self.execute_mrs(opcode);
+            } else {
+                self.execute_data_processing(opcode);
+            }
+        } else if bits2526 == 1 {
+            self.execute_load_store(opcode, bus);
+        } else if bits2526 == 2 {
+            if (opcode >> 24) & 1 == 1 { // Branch
+                self.execute_branch(opcode);
+            } else { // Block data transfer
+                self.execute_block_transfer(opcode, bus);
+            }
+        } else if bits2526 == 3 {
+            self.execute_coprocessor(opcode);
         }
 
         self.r[15] = self.r[15] & !3;
-        1
+        self.arm_cycles(opcode)
     }
 
-    fn step_thumb(&mut self, bus: &mut Bus, _interrupts: &mut InterruptController) -> u32 {
+    fn step_thumb(&mut self, bus: &mut Bus) -> u32 {
         let pc = self.r[15] & !1;
         let opcode = bus.read16(pc);
         self.r[15] = pc + 2;
-        
-        let inst_type = (opcode >> 10) & 0x3F;
-        match inst_type {
+        self.execute_thumb(opcode);
+        self.r[15] = self.r[15] & !1;
+        1
+    }
+
+    fn execute_thumb(&mut self, opcode: u16) {
+        let op = (opcode >> 13) & 7;
+        match op {
+            0b000 => {
+                if (opcode >> 11) & 3 == 3 {
+                    // Add/subtract register/immediate
+                    let rd = (opcode & 7) as usize;
+                    let rs = ((opcode >> 3) & 7) as usize;
+                    let rn_offset = ((opcode >> 6) & 7) as u32;
+                    let i = (opcode >> 10) & 1;
+                    let sub = (opcode >> 9) & 1;
+                    let val = if i != 0 { rn_offset } else { self.r[rn_offset as usize] };
+                    if sub != 0 {
+                        let result = self.r[rs].wrapping_sub(val);
+                        self.r[rd] = result;
+                    } else {
+                        let result = self.r[rs].wrapping_add(val);
+                        self.r[rd] = result;
+                    }
+                } else {
+                    // Move shifted register
+                    let rd = (opcode & 7) as usize;
+                    let rs = ((opcode >> 3) & 7) as usize;
+                    let offset = ((opcode >> 6) & 0x1F) as u32;
+                    let op_type = (opcode >> 11) & 3;
+                    match op_type {
+                        0b00 => self.r[rd] = self.r[rs] << offset,
+                        0b01 => if offset == 0 { self.r[rd] = 0 } else { self.r[rd] = self.r[rs] >> offset },
+                        0b10 => self.r[rd] = ((self.r[rs] as i32) >> offset) as u32,
+                        0b11 => {
+                            let shift = if offset == 0 { 32 } else { offset };
+                            self.r[rd] = self.r[rs].rotate_right(shift);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            0b001 => {
+                let rd = ((opcode >> 8) & 7) as usize;
+                let offset = (opcode & 0xFF) as u32;
+                let op_type = ((opcode >> 11) & 3) as u32;
+                match op_type {
+                    0b00 => self.r[rd] = offset, // MOV
+                    0b01 => self.r[rd] = self.r[rd].wrapping_add(offset), // CMP-like ADD
+                    0b10 => self.r[rd] = self.r[rd].wrapping_add(offset),
+                    0b11 => {}, // MOV
+                    _ => {}
+                }
+            }
+            0b010 => {
+                // Various
+            }
+            0b011 => {
+                // LDR/STR
+            }
+            0b100 => {
+                // LDRH/STRH, LDR/STR SP-relative
+            }
+            0b101 => {
+                // ADD offset to SP/PC, PUSH/POP
+                let rd = ((opcode >> 8) & 7) as usize;
+                if (opcode >> 7) & 1 == 0 {
+                    // ADD Rd, PC, #imm
+                    let imm = ((opcode & 0xFF) as u32) << 2;
+                    self.r[rd] = (self.r[15] & !2).wrapping_add(imm);
+                } else if (opcode >> 6) & 1 == 0 {
+                    // ADD Rd, SP, #imm
+                    let imm = ((opcode & 0x7F) as u32) << 2;
+                    if (opcode >> 7) & 1 == 0 {
+                        self.r[rd] = self.r[13].wrapping_add(imm);
+                    } else {
+                        self.r[rd] = self.r[13].wrapping_sub(imm);
+                    }
+                }
+            }
+            0b110 => {
+                // Load/store multiple
+            }
+            0b111 => {
+                // Conditional branch, SWI, unconditional branch
+                if (opcode >> 12) & 1 == 0 {
+                    // Conditional branch
+                    let cond = (opcode >> 8) & 0xF;
+                    let offset = (opcode & 0xFF) as i8;
+                    if self.check_condition_thumb(cond as u32) {
+                        self.r[15] = self.r[15].wrapping_add((offset as i32 * 2) as u32);
+                    }
+                } else if (opcode >> 12) & 1 == 1 && (opcode >> 8) & 1 == 0 {
+                    // BL prefix
+                } else {
+                    // BL/BLX suffix
+                    self.execute_thumb_bl(opcode);
+                }
+            }
             _ => {}
         }
+    }
 
-        1
+    fn execute_thumb_bl(&mut self, opcode: u16) {
+        let offset = (opcode & 0x7FF) as i32;
+        let sign = (offset >> 10) & 1;
+        let signed_off = if sign == 1 {
+            (offset | !0x7FF) * 2
+        } else {
+            offset * 2
+        };
+        let lr = self.r[14];
+        self.r[14] = self.r[15] | 1;
+        self.r[15] = ((lr & !1) + signed_off as u32) & !1;
     }
 
     fn check_condition(&self, cond: u32) -> bool {
@@ -148,26 +368,285 @@ impl Cpu {
         }
     }
 
-    fn execute_data_processing(&mut self, opcode: u32, bus: &mut Bus) {
-        let _opcode_type = (opcode >> 21) & 0xF;
-        let s = ((opcode >> 20) & 1) != 0;
-        let rn = ((opcode >> 16) & 0xF) as usize;
-        let rd = ((opcode >> 12) & 0xF) as usize;
-        let _immediate = ((opcode >> 25) & 1) != 0;
-
-        // Simplified: just handle basic cases
-        if rd < 15 {
-            self.r[rd] = self.r[rn].wrapping_add(1); // placeholder
-        }
-
-        if s && rd == 15 {
-            self.cpsr = self.spsr;
+    fn check_condition_thumb(&self, cond: u32) -> bool {
+        match cond {
+            0x0 => ((self.cpsr >> 30) & 1) == 1, // EQ
+            0x1 => ((self.cpsr >> 30) & 1) == 0, // NE
+            0x2 => ((self.cpsr >> 29) & 1) == 1, // CS/HS
+            0x3 => ((self.cpsr >> 29) & 1) == 0, // CC/LO
+            0x4 => ((self.cpsr >> 31) & 1) == 1, // MI
+            0x5 => ((self.cpsr >> 31) & 1) == 0, // PL
+            0x6 => ((self.cpsr >> 28) & 1) == 1, // VS
+            0x7 => ((self.cpsr >> 28) & 1) == 0, // VC
+            0x8 => ((self.cpsr >> 29) & 1) == 1 && ((self.cpsr >> 30) & 1) == 0, // HI
+            0x9 => ((self.cpsr >> 29) & 1) == 0 || ((self.cpsr >> 30) & 1) == 1, // LS
+            0xA => ((self.cpsr >> 31) & 1) == ((self.cpsr >> 28) & 1), // GE
+            0xB => ((self.cpsr >> 31) & 1) != ((self.cpsr >> 28) & 1), // LT
+            0xC => ((self.cpsr >> 30) & 1) == 0 && ((self.cpsr >> 31) & 1) == ((self.cpsr >> 28) & 1), // GT
+            0xD => ((self.cpsr >> 30) & 1) == 1 || ((self.cpsr >> 31) & 1) != ((self.cpsr >> 28) & 1), // LE
+            0xE => true,
+            0xF => false,
+            _ => true,
         }
     }
 
-    fn execute_load_store(&mut self, _opcode: u32, _bus: &mut Bus) {}
+    fn execute_data_processing(&mut self, opcode: u32) {
+        let op = (opcode >> 21) & 0xF;
+        let s = ((opcode >> 20) & 1) != 0;
+        let rn = ((opcode >> 16) & 0xF) as usize;
+        let rd = ((opcode >> 12) & 0xF) as usize;
+        let i = (opcode >> 25) & 1;
 
-    fn execute_branch_block(&mut self, opcode: u32, _bus: &mut Bus) {
+        let operand2 = if i == 1 {
+            self.imm_operand(opcode)
+        } else {
+            self.reg_operand(opcode, s)
+        };
+
+        let n = self.r[rn];
+        let mut result = 0u32;
+        let mut carry = (self.cpsr >> 29) & 1;
+        let mut overflow = false;
+
+        match op {
+            0x0 => { // AND
+                result = n & operand2.0;
+                carry = operand2.1;
+            }
+            0x1 => { // EOR
+                result = n ^ operand2.0;
+                carry = operand2.1;
+            }
+            0x2 => { // SUB
+                result = n.wrapping_sub(operand2.0);
+                carry = if n >= operand2.0 { 1 } else { 0 };
+                overflow = ((n ^ operand2.0) & (n ^ result)) >> 31 == 1;
+            }
+            0x3 => { // RSB
+                result = operand2.0.wrapping_sub(n);
+                carry = if operand2.0 >= n { 1 } else { 0 };
+                overflow = ((operand2.0 ^ n) & (operand2.0 ^ result)) >> 31 == 1;
+            }
+            0x4 => { // ADD
+                result = n.wrapping_add(operand2.0);
+                let u_result = (n as u64) + (operand2.0 as u64);
+                carry = if u_result > 0xFFFFFFFF { 1 } else { 0 };
+                overflow = ((n ^ result) & (operand2.0 ^ result)) >> 31 == 1;
+            }
+            0x5 => { // ADC
+                let c_in = (self.cpsr >> 29) & 1;
+                result = n.wrapping_add(operand2.0).wrapping_add(c_in);
+                carry = if (n as u64 + operand2.0 as u64 + c_in as u64) > 0xFFFFFFFF { 1 } else { 0 };
+            }
+            0x6 => { // SBC
+                let c_in = (self.cpsr >> 29) & 1;
+                result = n.wrapping_sub(operand2.0).wrapping_sub(1 - c_in);
+                carry = if n >= operand2.0 + (1 - c_in) { 1 } else { 0 };
+            }
+            0x7 => { // RSC
+                let c_in = (self.cpsr >> 29) & 1;
+                result = operand2.0.wrapping_sub(n).wrapping_sub(1 - c_in);
+                carry = if operand2.0 >= n + (1 - c_in) { 1 } else { 0 };
+            }
+            0x8 => { // TST
+                result = n & operand2.0;
+                carry = operand2.1;
+            }
+            0x9 => { // TEQ
+                result = n ^ operand2.0;
+                carry = operand2.1;
+            }
+            0xA => { // CMP
+                result = n.wrapping_sub(operand2.0);
+                carry = if n >= operand2.0 { 1 } else { 0 };
+                overflow = ((n ^ operand2.0) & (n ^ result)) >> 31 == 1;
+            }
+            0xB => { // CMN
+                result = n.wrapping_add(operand2.0);
+                carry = if (n as u64 + operand2.0 as u64) > 0xFFFFFFFF { 1 } else { 0 };
+                overflow = ((n ^ result) & (operand2.0 ^ result)) >> 31 == 1;
+            }
+            0xC => { // ORR
+                result = n | operand2.0;
+                carry = operand2.1;
+            }
+            0xD => { // MOV
+                result = operand2.0;
+                carry = operand2.1;
+            }
+            0xE => { // BIC
+                result = n & !operand2.0;
+                carry = operand2.1;
+            }
+            0xF => { // MVN
+                result = !operand2.0;
+                carry = operand2.1;
+            }
+            _ => {}
+        }
+
+        if op >= 8 && op <= 11 {
+            // TST, TEQ, CMP, CMN - don't write result, but update flags
+            if s {
+                self.update_flags(result, carry, (result >> 31) & 1, overflow);
+            }
+        } else {
+            if rd == 15 {
+                if s {
+                    self.cpsr = self.cpsr; // SPSR not implemented for now
+                }
+                self.r[15] = result;
+            } else {
+                self.r[rd] = result;
+                if s {
+                    self.update_flags(result, carry, (result >> 31) & 1, overflow);
+                }
+            }
+        }
+    }
+
+    fn update_flags(&mut self, result: u32, carry: u32, n: u32, overflow: bool) {
+        let z = if result == 0 { 1 } else { 0 };
+        let v = if overflow { 1 } else { 0 };
+        self.cpsr = (self.cpsr & !(0xF << 28)) | (n << 31) | (z << 30) | (carry << 29) | (v << 28);
+    }
+
+    fn imm_operand(&self, opcode: u32) -> (u32, u32) {
+        let imm = opcode & 0xFF;
+        let rotate = ((opcode >> 8) & 0xF) * 2;
+        let value = imm.rotate_right(rotate);
+        let carry = if rotate == 0 { (self.cpsr >> 29) & 1 } else { (value >> 31) & 1 };
+        (value, carry)
+    }
+
+    fn reg_operand(&mut self, opcode: u32, _s: bool) -> (u32, u32) {
+        let rm = (opcode & 0xF) as usize;
+        let shift_type = (opcode >> 5) & 0x3;
+        let shift_amount = if ((opcode >> 4) & 1) == 0 {
+            ((opcode >> 7) & 0x1F) as u32
+        } else {
+            let rs = ((opcode >> 8) & 0xF) as usize;
+            self.r[rs] & 0xFF
+        };
+        let val = self.r[rm];
+        let carry;
+        let result;
+
+        match shift_type {
+            0b00 => { // LSL
+                if shift_amount == 0 {
+                    result = val;
+                    carry = (self.cpsr >> 29) & 1;
+                } else if shift_amount < 32 {
+                    carry = (val >> (32 - shift_amount)) & 1;
+                    result = val << shift_amount;
+                } else if shift_amount == 32 {
+                    carry = val & 1;
+                    result = 0;
+                } else {
+                    carry = 0;
+                    result = 0;
+                }
+            }
+            0b01 => { // LSR
+                if shift_amount == 0 {
+                    carry = (val >> 31) & 1;
+                    result = 0;
+                } else if shift_amount < 32 {
+                    carry = (val >> (shift_amount - 1)) & 1;
+                    result = val >> shift_amount;
+                } else if shift_amount == 32 {
+                    carry = (val >> 31) & 1;
+                    result = 0;
+                } else {
+                    carry = 0;
+                    result = 0;
+                }
+            }
+            0b10 => { // ASR
+                if shift_amount == 0 || shift_amount >= 32 {
+                    if (val >> 31) & 1 == 1 {
+                        carry = 1;
+                        result = 0xFFFFFFFF;
+                    } else {
+                        carry = 0;
+                        result = 0;
+                    }
+                } else {
+                    carry = (val >> (shift_amount - 1)) & 1;
+                    result = ((val as i32) >> shift_amount) as u32;
+                }
+            }
+            0b11 => { // ROR
+                if shift_amount == 0 {
+                    let c = (self.cpsr >> 29) & 1;
+                    result = (c << 31) | (val >> 1);
+                    carry = val & 1;
+                } else {
+                    result = val.rotate_right(shift_amount);
+                    carry = (val >> ((shift_amount - 1) & 0x1F)) & 1;
+                }
+            }
+            _ => { result = val; carry = 0; }
+        }
+
+        (result, carry)
+    }
+
+    fn execute_load_store(&mut self, opcode: u32, bus: &mut Bus) {
+        let l = (opcode >> 20) & 1;
+        let b = (opcode >> 22) & 1;
+        let w = (opcode >> 21) & 1;
+        let u = (opcode >> 23) & 1;
+        let p = (opcode >> 24) & 1;
+        let i = (opcode >> 25) & 1;
+        let rn = ((opcode >> 16) & 0xF) as usize;
+        let rd = ((opcode >> 12) & 0xF) as usize;
+
+        let offset = if i == 1 {
+            opcode & 0xFFF
+        } else {
+            let rm = (opcode & 0xF) as usize;
+            let shift_amount = ((opcode >> 7) & 0x1F) as u32;
+            let shift_type = (opcode >> 5) & 0x3;
+            match shift_type {
+                0b00 => self.r[rm] << shift_amount,
+                0b01 => self.r[rm] >> shift_amount,
+                0b10 => ((self.r[rm] as i32) >> shift_amount) as u32,
+                0b11 => self.r[rm].rotate_right(shift_amount),
+                _ => self.r[rm],
+            }
+        };
+
+        let base = self.r[rn];
+        let addr = if u == 1 { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
+        let eff_addr = if p == 1 { addr } else { base };
+
+        if l == 1 {
+            // Load
+            if b == 1 {
+                self.r[rd] = bus.read8(eff_addr) as u32;
+            } else {
+                self.r[rd] = bus.read32(eff_addr & !3);
+            }
+            if rd == 15 {
+                self.r[15] = self.r[15] & !3;
+            }
+        } else {
+            // Store
+            if b == 1 {
+                bus.write8(eff_addr, (self.r[rd] & 0xFF) as u8);
+            } else {
+                bus.write32(eff_addr & !3, self.r[rd]);
+            }
+        }
+
+        if p == 0 || w == 1 {
+            self.r[rn] = addr;
+        }
+    }
+
+    fn execute_branch(&mut self, opcode: u32) {
         let link = ((opcode >> 24) & 1) != 0;
         let offset = (opcode & 0xFFFFFF) as i32;
         let signed_offset = if offset & 0x800000 != 0 {
@@ -177,12 +656,209 @@ impl Cpu {
         };
 
         if link {
-            self.r[14] = self.r[15];
+            self.r[14] = self.r[15] - 4;
         }
 
-        self.r[15] = ((self.r[15] as i32) + (signed_offset << 2)) as u32;
-        self.pipeline_valid = [false, false, false];
+        self.r[15] = ((self.r[15] as i32).wrapping_add(signed_offset << 2)) as u32;
     }
 
-    fn execute_coprocessor(&mut self, _opcode: u32, _bus: &mut Bus) {}
+    fn execute_mrs(&mut self, opcode: u32) {
+        let rd = ((opcode >> 12) & 0xF) as usize;
+        let r = (opcode >> 22) & 1;
+        let val = if r == 1 {
+            // SPSR
+            let idx = spsr_idx(self.mode);
+            self.reg_bank.spsr[idx]
+        } else {
+            self.cpsr
+        };
+        if rd < 15 {
+            self.r[rd] = val;
+        }
+    }
+
+    fn execute_msr(&mut self, opcode: u32) {
+        let i = (opcode >> 25) & 1;
+        let r = (opcode >> 22) & 1;
+        let field_mask = (opcode >> 16) & 0xF;
+
+        let val = if i == 1 {
+            let imm = opcode & 0xFF;
+            let rotate = ((opcode >> 8) & 0xF) * 2;
+            imm.rotate_right(rotate)
+        } else {
+            let rm = (opcode & 0xF) as usize;
+            self.r[rm]
+        };
+
+        if r == 0 {
+            // CPSR
+            let mut mask = 0u32;
+            if field_mask & 1 != 0 { mask |= 0x000000FF; }
+            if field_mask & 2 != 0 { mask |= 0x0000FF00; }
+            if field_mask & 4 != 0 { mask |= 0x00FF0000; }
+            if field_mask & 8 != 0 { mask |= 0xFF000000; }
+            self.cpsr = (self.cpsr & !mask) | (val & mask);
+        }
+    }
+
+    fn execute_multiply(&mut self, opcode: u32) {
+        let rd = ((opcode >> 16) & 0xF) as usize;
+        let rn = ((opcode >> 12) & 0xF) as usize;
+        let rs = ((opcode >> 8) & 0xF) as usize;
+        let rm = (opcode & 0xF) as usize;
+        let s = (opcode >> 20) & 1;
+        let a = (opcode >> 21) & 1;
+        let u = (opcode >> 22) & 1;
+
+        if u == 0 {
+            // MUL / MLA
+            let mut result = self.r[rm].wrapping_mul(self.r[rs]);
+            if a == 1 {
+                result = result.wrapping_add(self.r[rn]);
+            }
+            self.r[rd] = result & 0xFFFFFFFF;
+            if s == 1 {
+                let n = (result >> 31) & 1;
+                let z = if result == 0 { 1 } else { 0 };
+                self.cpsr = (self.cpsr & !((1 << 31) | (1 << 30) | (1 << 29))) | (n << 31) | (z << 30);
+            }
+        }
+    }
+
+    fn execute_halfword_transfer(&mut self, opcode: u32, _bus: &mut Bus) {
+        // Simplified
+    }
+
+    fn execute_block_transfer(&mut self, opcode: u32, bus: &mut Bus) {
+        let pre = (opcode >> 24) & 1;
+        let up = (opcode >> 23) & 1;
+        let s = (opcode >> 22) & 1;
+        let w = (opcode >> 21) & 1;
+        let l = (opcode >> 20) & 1;
+        let rn = ((opcode >> 16) & 0xF) as usize;
+        let rlist = opcode & 0xFFFF;
+
+        let start_addr = self.r[rn];
+        let mut addr = start_addr;
+
+        let count = rlist.count_ones();
+        if count == 0 {
+            if l == 1 {
+                self.r[15] = bus.read32(start_addr & !3);
+                self.r[15] = self.r[15] & !3;
+            } else {
+                bus.write32(start_addr & !3, self.r[15] + 4);
+            }
+            if w == 1 {
+                self.r[rn] = start_addr.wrapping_add(if up == 1 { 64 } else { (0u32).wrapping_sub(64) });
+            }
+            return;
+        }
+
+        let offset = count * 4;
+        let first_addr = if up == 1 { start_addr } else { start_addr.wrapping_sub(offset) };
+
+        if l == 1 {
+            // Load
+            for i in 0..16 {
+                if (rlist >> i) & 1 != 0 {
+                    addr = if up == 1 { start_addr + i * 4 } else { start_addr - offset + i * 4 };
+                    let eff_addr = if pre == 1 { addr + 4 } else { addr };
+                    self.r[i as usize] = bus.read32(eff_addr & !3);
+                }
+            }
+            if (rlist & (1 << 15)) != 0 {
+                self.r[15] = self.r[15] & !3;
+                if s == 1 {
+                    // Restore CPSR from SPSR
+                }
+            }
+        } else {
+            // Store
+            for i in 0..16 {
+                if (rlist >> i) & 1 != 0 {
+                    addr = if up == 1 { start_addr + i * 4 } else { start_addr - offset + i * 4 };
+                    let eff_addr = if pre == 1 { addr + 4 } else { addr };
+                    bus.write32(eff_addr & !3, self.r[i as usize]);
+                }
+            }
+        }
+
+        if w == 1 {
+            if up == 1 {
+                self.r[rn] = self.r[rn].wrapping_add(offset);
+            } else {
+                self.r[rn] = self.r[rn].wrapping_sub(offset);
+            }
+        }
+    }
+
+    fn execute_swi(&mut self, _opcode: u32, _bus: &mut Bus) {
+        // BIOS SWI handling - just skip
+    }
+
+    fn execute_coprocessor(&mut self, _opcode: u32) {
+        // Ignored
+    }
+
+    fn arm_cycles(&self, opcode: u32) -> u32 {
+        let bits2526 = (opcode >> 25) & 0x3;
+        match bits2526 {
+            0b00 => {
+                if (opcode >> 24) & 0xF == 0x9 && (opcode >> 4) & 1 == 1 {
+                    let s = (opcode >> 22) & 1;
+                    if s == 0 { // Multiply
+                        let m = (opcode >> 4) & 1;
+                        let rs = ((opcode >> 8) & 0xF) as usize;
+                        let bits = self.r[rs].count_ones();
+                        let base = if m == 0 { 1 } else { 2 };
+                        let s_iter = if bits % 2 == 0 { 1 } else { 0 };
+                        (base + s_iter + (bits / 2)) as u32
+                    } else {
+                        1
+                    }
+                } else {
+                    1
+                }
+            }
+            0b01 => {
+                // LDR/STR
+                let rd = ((opcode >> 12) & 0xF) as usize;
+                let i = (opcode >> 25) & 1;
+                if i == 0 { 1 } else { 2 }
+            }
+            0b10 => {
+                if (opcode >> 24) & 1 == 1 { // Branch
+                    3
+                } else {
+                    // Block transfer
+                    let n = (opcode & 0xFFFF).count_ones();
+                    (n + n - 1)
+                }
+            }
+            _ => 1,
+        }
+    }
+}
+
+fn spsr_idx(mode: u8) -> usize {
+    match mode as u32 {
+        MODE_FIQ => 0,
+        MODE_IRQ => 1,
+        MODE_SVC => 2,
+        MODE_ABT => 3,
+        MODE_UND => 4,
+        _ => 0,
+    }
+}
+
+fn bank_idx(mode: u8) -> usize {
+    match mode as u32 {
+        MODE_IRQ => 0,
+        MODE_SVC => 1,
+        MODE_ABT => 2,
+        MODE_UND => 3,
+        _ => 0,
+    }
 }
