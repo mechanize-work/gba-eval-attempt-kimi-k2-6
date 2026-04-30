@@ -282,16 +282,18 @@ impl Cpu {
 
 
     fn execute_thumb(&mut self, opcode: u16, bus: &mut Bus) {
-        let op = (opcode >> 13) & 7;
+        let op = (opcode >> 12) & 0xF;
         match op {
-            0b000 => self.execute_thumb_0(opcode),
-            0b001 => self.execute_thumb_1(opcode),
-            0b010 => self.execute_thumb_2(opcode),
-            0b011 => self.execute_thumb_3(opcode, bus),
-            0b100 => self.execute_thumb_4(opcode),
-            0b101 => self.execute_thumb_5(opcode, bus),
-            0b110 => self.execute_thumb_6(opcode, bus),
-            0b111 => self.execute_thumb_7(opcode),
+            0x0 | 0x1 => self.execute_thumb_move_shifted(opcode),
+            0x2 | 0x3 => self.execute_thumb_immediate(opcode),
+            0x4 => self.execute_thumb_alu(opcode),
+            0x5 => self.execute_thumb_hi_reg_bx(opcode),
+            0x6 | 0x7 => self.execute_thumb_load_store_reg(opcode, bus),
+            0x8 | 0x9 => self.execute_thumb_load_store_imm(opcode, bus),
+            0xA | 0xB => self.execute_thumb_sp_pc_push_pop(opcode, bus),
+            0xC | 0xD => self.execute_thumb_cond_branch(opcode),
+            0xE => self.execute_thumb_uncond_branch(opcode),
+            0xF => self.execute_thumb_bl(opcode),
             _ => {}
         }
     }
