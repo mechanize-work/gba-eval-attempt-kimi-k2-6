@@ -11,10 +11,8 @@ fn main() {
     }
     emu_load_rom(rom_data.len() as i32);
     
-    for i in 0..500 {
+    // No keys - just boot
+    for i in 0..120 {
         emu_run_frame();
-        if i % 50 == 0 {
-            eprintln!("Frame {}", i);
-        }
     }
 }
