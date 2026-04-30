@@ -227,17 +227,15 @@ impl Cpu {
                 } else {
                     self.execute_halfword_transfer(opcode, bus);
                 }
-            } else if (opcode >> 23) & 3 == 2 && (opcode >> 20) & 1 == 0 {
-                if (opcode >> 21) & 1 == 0 {
-                    self.execute_mrs(opcode);
-                } else {
-                    self.execute_msr(opcode);
-                }
             } else if (opcode & 0x0FFFFFF0) == 0x012FFF10 {
-                // BX
+                // BX - must come before MRS/MSR check!
                 let rm = (opcode & 0xF) as usize;
                 self.r[15] = self.r[rm] & !1;
                 self.thumb = (self.r[rm] & 1) != 0;
+            } else if (opcode & 0x0DB0F000) == 0x01000000 {
+                self.execute_mrs(opcode);
+            } else if (opcode & 0x0DB0F000) == 0x0120F000 {
+                self.execute_msr(opcode);
             } else {
                 self.execute_data_processing(opcode, pc_plus_8);
             }
