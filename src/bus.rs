@@ -118,6 +118,30 @@ impl Bus {
         self.write8(a + 3, (val >> 24) as u8);
     }
 
+    // Interrupt registers directly on Bus for easy PPU/CPU access
+    pub fn read_ie(&self) -> u16 {
+        (self.io[0x200] as u16) | ((self.io[0x201] as u16) << 8)
+    }
+    pub fn write_ie(&mut self, val: u16) {
+        self.io[0x200] = (val & 0xFF) as u8;
+        self.io[0x201] = ((val >> 8) & 0xFF) as u8;
+    }
+    pub fn read_if(&self) -> u16 {
+        (self.io[0x202] as u16) | ((self.io[0x203] as u16) << 8)
+    }
+    pub fn write_if(&mut self, val: u16) {
+        // Writing 1 clears bits
+        self.io[0x202] &= !(val & 0xFF) as u8;
+        self.io[0x203] &= !((val >> 8) & 0xFF) as u8;
+    }
+    pub fn read_ime(&self) -> u16 {
+        (self.io[0x208] as u16) | ((self.io[0x209] as u16) << 8)
+    }
+    pub fn write_ime(&mut self, val: u16) {
+        self.io[0x208] = (val & 1) as u8;
+        self.io[0x209] = 0;
+    }
+
     fn vram_read(&self, offset: u32) -> u8 {
         let addr = offset & 0x1FFFF;
         if addr >= 0x18000 {
@@ -150,13 +174,34 @@ impl Bus {
     }
 
     fn io_write8(&mut self, addr: u32, val: u8) {
-        eprintln!("IOW 0x{:08X} = 0x{:02X}", 0x04000000 + addr, val);
+        // eprintln!("IOW 0x{:08X} = 0x{:02X}", 0x04000000 + addr, val);
         let offset = addr as usize;
         match addr {
             0x00 => self.dispcnt = (self.dispcnt & 0xFF00) | (val as u16),
             0x01 => self.dispcnt = (self.dispcnt & 0x00FF) | ((val as u16) << 8),
             0x04 => self.dispstat = (self.dispstat & 0xFF00) | (val as u16),
             0x05 => self.dispstat = (self.dispstat & 0x00FF) | ((val as u16) << 8),
+            0x08 => { self.io[0x08] = val; }
+            0x09 => { self.io[0x09] = val; }
+            0x0A => { self.io[0x0A] = val; }
+            0x0B => { self.io[0x0B] = val; }
+            0x10 | 0x11 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 | 0x17 => {
+                self.io[offset] = val;
+            }
+            0x48 => { self.io[0x48] = val; }
+            0x49 => { self.io[0x49] = val; }
+            0x4A => { self.io[0x4A] = val; }
+            0x4B => { self.io[0x4B] = val; }
+            0x50 | 0x51 | 0x52 | 0x53 | 0x54 | 0x55 => {
+                self.io[offset] = val;
+            }
+            0x60..=0x9F => { self.io[offset] = val; }
+            0x200 => { self.io[0x200] = val; }
+            0x201 => { self.io[0x201] = val; }
+            0x202 => { self.io[0x202] &= !val; }
+            0x203 => { self.io[0x203] &= !val; }
+            0x208 => { self.io[0x208] = val & 1; }
+            0x209 => {}
             _ => self.io[offset] = val,
         }
     }

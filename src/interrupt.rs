@@ -1,53 +1,26 @@
-pub struct InterruptController {
-    ie: u16,
-    if_: u16,
-    ime: u16,
-}
+pub struct InterruptController;
 
 impl InterruptController {
     pub fn new() -> Self {
-        InterruptController { ie: 0, if_: 0, ime: 0 }
+        InterruptController
     }
 
-    pub fn reset(&mut self) {
-        self.ie = 0;
-        self.if_ = 0;
-        self.ime = 0;
+    pub fn reset(&mut self) {}
+
+    pub fn irq_pending(&self, bus: &crate::bus::Bus) -> bool {
+        let ie = bus.read_ie();
+        let if_ = bus.read_if();
+        let ime = bus.read_ime();
+        ime != 0 && (ie & if_) != 0
     }
 
-    pub fn irq_pending(&self) -> bool {
-        self.ime != 0 && (self.ie & self.if_) != 0
+    pub fn request_vblank(&self, bus: &mut crate::bus::Bus) {
+        let if_ = bus.read_if();
+        bus.write_if(if_ | 1);
     }
 
-    pub fn request_vblank(&mut self) {
-        self.if_ |= 1; // VBlank
-    }
-
-    pub fn request_vcount(&mut self) {
-        self.if_ |= 1 << 2; // VCount match
-    }
-
-    pub fn read_ie(&self) -> u16 {
-        self.ie
-    }
-
-    pub fn write_ie(&mut self, val: u16) {
-        self.ie = val;
-    }
-
-    pub fn read_if(&self) -> u16 {
-        self.if_
-    }
-
-    pub fn write_if(&mut self, val: u16) {
-        self.if_ &= !val; // Writing 1 clears
-    }
-
-    pub fn read_ime(&self) -> u16 {
-        self.ime
-    }
-
-    pub fn write_ime(&mut self, val: u16) {
-        self.ime = val & 1;
+    pub fn request_vcount(&self, bus: &mut crate::bus::Bus) {
+        let if_ = bus.read_if();
+        bus.write_if(if_ | (1 << 2));
     }
 }

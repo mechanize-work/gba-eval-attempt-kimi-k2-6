@@ -90,7 +90,7 @@ impl Emulator {
             }
             let cycles = self.cpu.step(&mut self.bus, &mut self.interrupts);
             self.advance_cycles(cycles);
-            if self.interrupts.irq_pending() && !self.cpu.irq_disabled() {
+            if self.interrupts.irq_pending(&self.bus) && !self.cpu.irq_disabled() {
                 self.cpu.trigger_irq(&mut self.bus);
             }
         }
