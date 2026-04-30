@@ -189,9 +189,11 @@ impl Cpu {
         } else if op_type == 0b000 {
             if (opcode >> 24) & 0xF == 0x9 && (opcode >> 4) & 1 == 1 {
                 opcode_desc.push_str(" [MULT/HW]");
+            } else if (opcode & 0x0FFFFFF0) == 0x012FFF10 {
+                opcode_desc.push_str(" [BX]");
             } else if (opcode & 0x0DB0F000) == 0x01000000 {
                 opcode_desc.push_str(" [MRS]");
-            } else if (opcode & 0x0DB0F000) == 0x0120F000 {
+            } else if (opcode & 0x0DB0F010) == 0x0120F000 {
                 opcode_desc.push_str(" [MSR]");
             } else {
                 let dp_op = (opcode >> 21) & 0xF;
@@ -234,7 +236,8 @@ impl Cpu {
                 self.thumb = (self.r[rm] & 1) != 0;
             } else if (opcode & 0x0DB0F000) == 0x01000000 {
                 self.execute_mrs(opcode);
-            } else if (opcode & 0x0DB0F000) == 0x0120F000 {
+            } else if (opcode & 0x0DB0F010) == 0x0120F000 {
+                // MSR - must NOT match BX (which has bit4=1)
                 self.execute_msr(opcode);
             } else {
                 self.execute_data_processing(opcode, pc_plus_8);
@@ -447,10 +450,10 @@ impl Cpu {
         let operand2 = if i == 1 {
             self.imm_operand(opcode)
         } else {
-            self.reg_operand(opcode, s)
+            self.reg_operand(opcode, s, pc_plus_8)
         };
 
-        let n = self.r[rn];
+        let n = if rn == 15 { pc_plus_8 } else { self.r[rn] };
         let mut result = 0u32;
         let mut carry = (self.cpsr >> 29) & 1;
         let mut overflow = false;
@@ -566,7 +569,7 @@ impl Cpu {
         (value, carry)
     }
 
-    fn reg_operand(&mut self, opcode: u32, _s: bool) -> (u32, u32) {
+    fn reg_operand(&mut self, opcode: u32, _s: bool, pc_plus_8: u32) -> (u32, u32) {
         let rm = (opcode & 0xF) as usize;
         let shift_type = (opcode >> 5) & 0x3;
         let shift_amount = if ((opcode >> 4) & 1) == 0 {
@@ -575,7 +578,7 @@ impl Cpu {
             let rs = ((opcode >> 8) & 0xF) as usize;
             self.r[rs] & 0xFF
         };
-        let val = self.r[rm];
+        let val = if rm == 15 { pc_plus_8 } else { self.r[rm] };
         let carry;
         let result;
 
