@@ -216,40 +216,54 @@ impl Cpu {
             return self.arm_cycles(opcode);
         }
 
-        let bits2526 = (opcode >> 25) & 0x7;
-        let bit27 = (opcode >> 27) & 1;
+        let bits2726 = (opcode >> 26) & 0x3;
+        let bit25 = (opcode >> 25) & 1;
 
-        if bit27 == 1 {
-            if bits2526 & 6 == 4 { // Branch/link
-                self.execute_branch(opcode, pc_plus_8);
-            } else if bits2526 & 6 == 6 { // SWI
-                self.execute_swi(opcode, bus);
-            }
-        } else if bits2526 == 0 {
+        if bits2726 == 0 {
             if (opcode >> 24) & 0xF == 0x9 && (opcode >> 4) & 1 == 1 {
                 // Multiply or LDRH/STRH
-                if (opcode >> 5) & 3 == 0 && (opcode >> 22) & 1 == 0 {
+                if bit25 == 0 && (opcode >> 5) & 3 == 0 && (opcode >> 22) & 1 == 0 {
                     self.execute_multiply(opcode);
                 } else {
                     self.execute_halfword_transfer(opcode, bus);
                 }
-            } else if (opcode & 0x0DB0F000) == 0x01000000 {
-                self.execute_mrs(opcode);
-            } else if (opcode & 0x0DB0F000) == 0x0120F000 {
-                self.execute_msr(opcode);
+            } else if (opcode >> 23) & 3 == 2 && (opcode >> 20) & 1 == 0 {
+                if (opcode >> 21) & 1 == 0 {
+                    self.execute_mrs(opcode);
+                } else {
+                    self.execute_msr(opcode);
+                }
+            } else if (opcode & 0x0FFFFFF0) == 0x012FFF10 {
+                // BX
+                let rm = (opcode & 0xF) as usize;
+                self.r[15] = self.r[rm] & !1;
+                self.thumb = (self.r[rm] & 1) != 0;
             } else {
                 self.execute_data_processing(opcode, pc_plus_8);
             }
-        } else if bits2526 == 1 {
+        } else if bits2726 == 1 {
             self.execute_load_store(opcode, bus);
-        } else if bits2526 == 2 {
-            if (opcode >> 24) & 1 == 1 { // Branch
+        } else if bits2726 == 2 {
+            if bit25 == 1 {
+                // Branch
                 self.execute_branch(opcode, pc_plus_8);
-            } else { // Block data transfer
+            } else {
+                // Block data transfer
                 self.execute_block_transfer(opcode, bus);
             }
-        } else if bits2526 == 3 {
-            self.execute_coprocessor(opcode);
+        } else if bits2726 == 3 {
+            if bit25 == 0 {
+                // Coprocessor data transfer
+                self.execute_coprocessor(opcode);
+            } else if bit25 == 1 {
+                if (opcode >> 24) & 1 == 0 {
+                    // Coprocessor data operation or register transfer
+                    self.execute_coprocessor(opcode);
+                } else {
+                    // SWI
+                    self.execute_swi(opcode, bus);
+                }
+            }
         }
 
         self.r[15] = self.r[15] & !3;
