@@ -1,12 +1,14 @@
+use crate::interrupt::InterruptController;
+
 pub struct Bus {
-    bios: [u8; 0x4000],
-    ewram: [u8; 0x40000],
-    iwram: [u8; 0x8000],
-    io: [u8; 0x400],
-    palette: [u8; 0x400],
-    vram: [u8; 0x18000],
-    oam: [u8; 0x400],
-    rom: Vec<u8>,
+    pub bios: [u8; 0x4000],
+    pub ewram: [u8; 0x40000],
+    pub iwram: [u8; 0x8000],
+    pub io: [u8; 0x400],
+    pub palette: [u8; 0x400],
+    pub vram: [u8; 0x18000],
+    pub oam: [u8; 0x400],
+    pub rom: Vec<u8>,
 }
 
 impl Bus {
@@ -43,16 +45,17 @@ impl Bus {
     }
 
     pub fn read8(&self, addr: u32) -> u8 {
-        match addr & 0xFF000000 {
+        match addr & 0x0F000000 {
             0x00000000 => self.bios[(addr & 0x3FFF) as usize],
             0x02000000 => self.ewram[(addr & 0x3FFFF) as usize],
             0x03000000 => self.iwram[(addr & 0x7FFF) as usize],
-            0x04000000 => self.io[(addr & 0x3FF) as usize],
+            0x04000000 => self.io_read8(addr & 0x3FF),
             0x05000000 => self.palette[(addr & 0x3FF) as usize],
-            0x06000000 => self.vram[((addr & 0x1FFFF) as usize) % 0x18000],
+            0x06000000 => self.vram_read(addr),
             0x07000000 => self.oam[(addr & 0x3FF) as usize],
-            0x08000000..=0x0D000000 => self.rom[((addr & 0x1FFFFFF) as usize) % self.rom.len()],
-            0x0E000000 | 0x0F000000 => 0,
+            0x08000000 | 0x09000000 | 0x0A000000 | 0x0B000000 | 0x0C000000 | 0x0D000000 => {
+                self.rom[((addr & 0x1FFFFFF) as usize) % self.rom.len()]
+            }
             _ => 0,
         }
     }
@@ -68,13 +71,13 @@ impl Bus {
     }
 
     pub fn write8(&mut self, addr: u32, val: u8) {
-        match addr & 0xFF000000 {
-            0x00000000 => {}, // BIOS read-only
+        match addr & 0x0F000000 {
+            0x00000000 => {},
             0x02000000 => self.ewram[(addr & 0x3FFFF) as usize] = val,
             0x03000000 => self.iwram[(addr & 0x7FFF) as usize] = val,
             0x04000000 => self.io_write8(addr & 0x3FF, val),
             0x05000000 => self.palette[(addr & 0x3FF) as usize] = val,
-            0x06000000 => self.vram[((addr & 0x1FFFF) as usize) % 0x18000] = val,
+            0x06000000 => self.vram_write(addr, val),
             0x07000000 => self.oam[(addr & 0x3FF) as usize] = val,
             _ => {},
         }
@@ -92,6 +95,29 @@ impl Bus {
         self.write8(a + 1, (val >> 8) as u8);
         self.write8(a + 2, (val >> 16) as u8);
         self.write8(a + 3, (val >> 24) as u8);
+    }
+
+    fn vram_read(&self, addr: u32) -> u8 {
+        let offset = addr & 0x1FFFF;
+        if offset >= 0x18000 {
+            self.vram[(offset - 0x8000) as usize]
+        } else {
+            self.vram[offset as usize]
+        }
+    }
+
+    fn vram_write(&mut self, addr: u32, val: u8) {
+        let offset = addr & 0x1FFFF;
+        if offset >= 0x18000 {
+            self.vram[(offset - 0x8000) as usize] = val;
+        } else {
+            self.vram[offset as usize] = val;
+        }
+    }
+
+    fn io_read8(&self, addr: u32) -> u8 {
+        let offset = addr as usize;
+        self.io[offset]
     }
 
     fn io_write8(&mut self, addr: u32, val: u8) {
