@@ -344,7 +344,7 @@ impl Cpu {
     }
 
     fn execute_thumb_2(&mut self, opcode: u16) {
-        let op = (opcode >> 9) & 0xF;
+        let op = (opcode >> 6) & 0xF;
         let rs = ((opcode >> 3) & 7) as usize;
         let rd = ((opcode & 7) | ((opcode >> 4) & 8)) as usize;
         match op {

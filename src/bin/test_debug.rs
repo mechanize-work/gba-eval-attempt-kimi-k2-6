@@ -11,15 +11,15 @@ fn main() {
     }
     emu_load_rom(rom_data.len() as i32);
     
-    // Run 1 frame then trace
-    emu_run_frame();
+    for i in 0..55 {
+        emu_run_frame();
+    }
     
-    eprintln!("=== After 1 frame ===");
-    for i in 0..30 {
+    eprintln!("=== Trace from frame 55 ===");
+    for i in 0..55 {
         let pc = emu_debug_pc();
-        eprintln!("step {}: PC=0x{:08X}", i, pc);
-        if pc < 0x0100 || pc > 0x0A000000 {
-            eprintln!("SUSPICIOUS PC!");
+        if pc < 0x100 || pc > 0x0A000000 {
+            eprintln!("CRASH at step {}: PC=0x{:08X}", i, pc);
             break;
         }
         emu_debug_step_trace();
