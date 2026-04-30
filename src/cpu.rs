@@ -172,10 +172,43 @@ impl Cpu {
     pub fn step_trace(&mut self, bus: &mut Bus, interrupts: &mut InterruptController) -> (u32, String) {
         let pc = self.r[15] & (!3);
         let opcode = bus.read32(pc);
+        let mut reg_trace = String::new();
+        for i in 0..16 {
+            if i % 4 == 1 {
+                reg_trace.push('\n');
+            }
+            reg_trace.push_str(&format!("R{:2}=0x{:08X} ", i, self.r[i]));
+        }
+        reg_trace.push_str(&format!("CPSR=0x{:08X}", self.cpsr));
+        
         let cycles = self.step(bus, interrupts);
-        let trace = format!("PC=0x{:08X} opcode=0x{:08X}", pc, opcode);
-        eprintln!("{}", trace);
-        (cycles, trace)
+        let mut opcode_desc = format!("PC=0x{:08X} op=0x{:08X}", pc, opcode);
+        
+        // Decode instruction
+        let op_type = (opcode >> 25) & 7;
+        let bit27 = (opcode >> 27) & 1;
+        if bit27 == 1 {
+            if op_type == 0b101 {
+                opcode_desc.push_str(" [BRANCH]");
+            }
+        } else if (opcode & 0x0FFFFFF0) == 0x012FFF10 {
+            opcode_desc.push_str(" [BX]");
+        } else if op_type == 0b000 {
+            if (opcode >> 24) & 0xF == 0x9 && (opcode >> 4) & 1 == 1 {
+                opcode_desc.push_str(" [MULT/HW]");
+            } else if (opcode & 0x0DB0F000) == 0x01000000 {
+                opcode_desc.push_str(" [MRS]");
+            } else if (opcode & 0x0DB0F000) == 0x0120F000 {
+                opcode_desc.push_str(" [MSR]");
+            } else {
+                let dp_op = (opcode >> 21) & 0xF;
+                let dp_names = ["AND","EOR","SUB","RSB","ADD","ADC","SBC","RSC","TST","TEQ","CMP","CMN","ORR","MOV","BIC","MVN"];
+                opcode_desc.push_str(&format!(" [{}]", dp_names[dp_op as usize]));
+            }
+        }
+        
+        eprintln!("{}", opcode_desc);
+        (cycles, opcode_desc)
     }
 
     fn step_arm(&mut self, bus: &mut Bus) -> u32 {
