@@ -10,31 +10,40 @@ fn main() {
     }
     emu_load_rom(rom_data.len() as i32);
     
-    // Trace first instruction
-    for _ in 0..5 {
-        emu_debug_step_trace();
-    }
-    println!("\nRunning 120 frames...");
-    for i in 0..120 {
+    for frame in 0..600 {
         emu_run_frame();
     }
     
     // Check framebuffer
     let fb = emu_framebuffer();
-    let mut non_black = 0;
-    let mut non_white = 0;
+    let mut black = 0;
+    let mut white = 0;
+    let mut other = 0;
     unsafe {
         for i in 0..(240 * 160) {
-            let pixel = *fb.offset(i as isize);
-            if pixel != 0xFF000000 {
-                non_black += 1;
-            }
-            if pixel != 0xFFFFFFFF {
-                non_white += 1;
-            }
+            let p = *fb.offset(i as isize);
+            if p == 0xFF000000 { black += 1; }
+            else if p == 0xFFFFFFFF { white += 1; }
+            else { other += 1; }
         }
     }
-    println!("Non-black pixels: {}", non_black);
-    println!("Non-white pixels: {}", non_white);
-    println!("Done!");
+    println!("After 600 frames: black={}, white={}, other={}", black, white, other);
+    
+    // Run for another 600
+    for frame in 0..600 {
+        emu_run_frame();
+    }
+    
+    let mut black = 0;
+    let mut white = 0;
+    let mut other = 0;
+    unsafe {
+        for i in 0..(240 * 160) {
+            let p = *fb.offset(i as isize);
+            if p == 0xFF000000 { black += 1; }
+            else if p == 0xFFFFFFFF { white += 1; }
+            else { other += 1; }
+        }
+    }
+    println!("After 1200 frames: black={}, white={}, other={}", black, white, other);
 }

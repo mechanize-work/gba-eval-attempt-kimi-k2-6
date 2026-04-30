@@ -382,13 +382,13 @@ impl Cpu {
         let offset = (opcode & 0x7FF) as i32;
         let sign = (offset >> 10) & 1;
         let signed_off = if sign == 1 {
-            (offset | !0x7FF) * 2
+            offset | !0x7FF
         } else {
-            offset * 2
+            offset
         };
         let lr = self.r[14];
         self.r[14] = self.r[15] | 1;
-        self.r[15] = ((lr & !1) + signed_off as u32) & !1;
+        self.r[15] = ((lr & !1) as i32).wrapping_add(signed_off * 2) as u32;
     }
 
     fn check_condition(&self, cond: u32) -> bool {
