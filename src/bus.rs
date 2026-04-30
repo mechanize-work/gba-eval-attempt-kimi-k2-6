@@ -185,6 +185,9 @@ impl Bus {
 
     fn io_write8(&mut self, addr: u32, val: u8) {
         // eprintln!("IOW 0x{:08X} = 0x{:02X}", 0x04000000 + addr, val);
+        if addr < 0x60 || addr == 0x200 || addr == 0x201 || addr == 0x202 || addr == 0x203 || addr == 0x208 {
+            eprintln!("IOW 0x{:08X} = 0x{:02X}", 0x04000000 + addr, val);
+        }
         let offset = addr as usize;
         match addr {
             0x00 => self.dispcnt = (self.dispcnt & 0xFF00) | (val as u16),

@@ -11,18 +11,17 @@ fn main() {
     }
     emu_load_rom(rom_data.len() as i32);
     
-    // Press Start
-    emu_set_keys(0x008);
+    // Run 1 frame then trace
+    emu_run_frame();
     
-    for i in 0..120 {
-        emu_run_frame();
-        if i == 5 { emu_set_keys(0x000); }
+    eprintln!("=== After 1 frame ===");
+    for i in 0..30 {
+        let pc = emu_debug_pc();
+        eprintln!("step {}: PC=0x{:08X}", i, pc);
+        if pc < 0x0100 || pc > 0x0A000000 {
+            eprintln!("SUSPICIOUS PC!");
+            break;
+        }
+        emu_debug_step_trace();
     }
-    
-    let fb_ptr = emu_framebuffer();
-    let fb = unsafe { std::slice::from_raw_parts(fb_ptr, 240 * 160) };
-    let black = fb.iter().filter(|&&p| p == 0xFF000000).count();
-    let white = fb.iter().filter(|&&p| p == 0xFFFFFFFF).count();
-    let other = fb.len() - black - white;
-    eprintln!("After 120 frames with Start: black={}, white={}, other={}", black, white, other);
 }

@@ -275,106 +275,198 @@ impl Cpu {
         let pc = self.r[15] & !1;
         let opcode = bus.read16(pc);
         self.r[15] = pc + 2;
-        self.execute_thumb(opcode);
+        self.execute_thumb(opcode, bus);
         self.r[15] = self.r[15] & !1;
         1
     }
 
-    fn execute_thumb(&mut self, opcode: u16) {
+
+    fn execute_thumb(&mut self, opcode: u16, bus: &mut Bus) {
         let op = (opcode >> 13) & 7;
         match op {
-            0b000 => {
-                if (opcode >> 11) & 3 == 3 {
-                    // Add/subtract register/immediate
-                    let rd = (opcode & 7) as usize;
-                    let rs = ((opcode >> 3) & 7) as usize;
-                    let rn_offset = ((opcode >> 6) & 7) as u32;
-                    let i = (opcode >> 10) & 1;
-                    let sub = (opcode >> 9) & 1;
-                    let val = if i != 0 { rn_offset } else { self.r[rn_offset as usize] };
-                    if sub != 0 {
-                        let result = self.r[rs].wrapping_sub(val);
-                        self.r[rd] = result;
-                    } else {
-                        let result = self.r[rs].wrapping_add(val);
-                        self.r[rd] = result;
-                    }
-                } else {
-                    // Move shifted register
-                    let rd = (opcode & 7) as usize;
-                    let rs = ((opcode >> 3) & 7) as usize;
-                    let offset = ((opcode >> 6) & 0x1F) as u32;
-                    let op_type = (opcode >> 11) & 3;
-                    match op_type {
-                        0b00 => self.r[rd] = self.r[rs] << offset,
-                        0b01 => if offset == 0 { self.r[rd] = 0 } else { self.r[rd] = self.r[rs] >> offset },
-                        0b10 => self.r[rd] = ((self.r[rs] as i32) >> offset) as u32,
-                        0b11 => {
-                            let shift = if offset == 0 { 32 } else { offset };
-                            self.r[rd] = self.r[rs].rotate_right(shift);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            0b001 => {
-                let rd = ((opcode >> 8) & 7) as usize;
-                let offset = (opcode & 0xFF) as u32;
-                let op_type = ((opcode >> 11) & 3) as u32;
-                match op_type {
-                    0b00 => self.r[rd] = offset, // MOV
-                    0b01 => self.r[rd] = self.r[rd].wrapping_add(offset), // CMP-like ADD
-                    0b10 => self.r[rd] = self.r[rd].wrapping_add(offset),
-                    0b11 => {}, // MOV
-                    _ => {}
-                }
-            }
-            0b010 => {
-                // Various
-            }
-            0b011 => {
-                // LDR/STR
-            }
-            0b100 => {
-                // LDRH/STRH, LDR/STR SP-relative
-            }
-            0b101 => {
-                // ADD offset to SP/PC, PUSH/POP
-                let rd = ((opcode >> 8) & 7) as usize;
-                if (opcode >> 7) & 1 == 0 {
-                    // ADD Rd, PC, #imm
-                    let imm = ((opcode & 0xFF) as u32) << 2;
-                    self.r[rd] = (self.r[15] & !2).wrapping_add(imm);
-                } else if (opcode >> 6) & 1 == 0 {
-                    // ADD Rd, SP, #imm
-                    let imm = ((opcode & 0x7F) as u32) << 2;
-                    if (opcode >> 7) & 1 == 0 {
-                        self.r[rd] = self.r[13].wrapping_add(imm);
-                    } else {
-                        self.r[rd] = self.r[13].wrapping_sub(imm);
-                    }
-                }
-            }
-            0b110 => {
-                // Load/store multiple
-            }
-            0b111 => {
-                // Conditional branch, SWI, unconditional branch
-                if (opcode >> 12) & 1 == 0 {
-                    // Conditional branch
-                    let cond = (opcode >> 8) & 0xF;
-                    let offset = (opcode & 0xFF) as i8;
-                    if self.check_condition_thumb(cond as u32) {
-                        self.r[15] = self.r[15].wrapping_add((offset as i32 * 2) as u32);
-                    }
-                } else if (opcode >> 12) & 1 == 1 && (opcode >> 8) & 1 == 0 {
-                    // BL prefix
-                } else {
-                    // BL/BLX suffix
-                    self.execute_thumb_bl(opcode);
-                }
-            }
+            0b000 => self.execute_thumb_0(opcode),
+            0b001 => self.execute_thumb_1(opcode),
+            0b010 => self.execute_thumb_2(opcode),
+            0b011 => self.execute_thumb_3(opcode, bus),
+            0b100 => self.execute_thumb_4(opcode),
+            0b101 => self.execute_thumb_5(opcode, bus),
+            0b110 => self.execute_thumb_6(opcode, bus),
+            0b111 => self.execute_thumb_7(opcode),
             _ => {}
+        }
+    }
+
+    fn execute_thumb_0(&mut self, opcode: u16) {
+        if (opcode >> 11) & 3 == 3 {
+            let rd = (opcode & 7) as usize;
+            let rs = ((opcode >> 3) & 7) as usize;
+            let rn_offset = ((opcode >> 6) & 7) as u32;
+            let i = (opcode >> 10) & 1;
+            let sub = (opcode >> 9) & 1;
+            let val = if i != 0 { rn_offset } else { self.r[rn_offset as usize] };
+            if sub != 0 {
+                self.r[rd] = self.r[rs].wrapping_sub(val);
+            } else {
+                self.r[rd] = self.r[rs].wrapping_add(val);
+            }
+        } else {
+            let rd = (opcode & 7) as usize;
+            let rs = ((opcode >> 3) & 7) as usize;
+            let offset = ((opcode >> 6) & 0x1F) as u32;
+            let shift_type = (opcode >> 11) & 3;
+            let result = match shift_type {
+                0b00 => if offset == 0 { self.r[rs] } else { self.r[rs] << offset },
+                0b01 => if offset == 0 { 0 } else { self.r[rs] >> offset },
+                0b10 => if offset == 0 { if (self.r[rs] >> 31) & 1 == 1 { 0xFFFFFFFF } else { 0 } } else { ((self.r[rs] as i32) >> offset) as u32 },
+                0b11 => if offset == 0 { self.r[rs].rotate_right(1) | ((self.cpsr >> 29) & 1) << 31 } else { self.r[rs].rotate_right(offset) },
+                _ => self.r[rs],
+            };
+            self.r[rd] = result;
+        }
+    }
+
+    fn execute_thumb_1(&mut self, opcode: u16) {
+        let rd = ((opcode >> 8) & 7) as usize;
+        let offset = (opcode & 0xFF) as u32;
+        let op_type = ((opcode >> 11) & 3) as u32;
+        match op_type {
+            0b00 => self.r[rd] = offset,
+            0b01 => {
+                let result = self.r[rd].wrapping_sub(offset);
+                let carry = if self.r[rd] >= offset { 1 } else { 0 };
+                let overflow = ((self.r[rd] ^ offset) & (self.r[rd] ^ result)) >> 31 == 1;
+                self.update_flags(result, carry, (result >> 31) & 1, overflow);
+            }
+            0b10 => self.r[rd] = self.r[rd].wrapping_add(offset),
+            0b11 => self.r[rd] = self.r[rd].wrapping_sub(offset),
+            _ => {}
+        }
+    }
+
+    fn execute_thumb_2(&mut self, opcode: u16) {
+        let op = (opcode >> 9) & 0xF;
+        let rs = ((opcode >> 3) & 7) as usize;
+        let rd = ((opcode & 7) | ((opcode >> 4) & 8)) as usize;
+        match op {
+            0b0000 => self.r[rd] = self.r[rd] & self.r[rs],
+            0b0001 => self.r[rd] = self.r[rd] ^ self.r[rs],
+            0b0010 => { let shift = self.r[rs] & 0xFF; self.r[rd] = if shift >= 32 { 0 } else { self.r[rd] << shift }; }
+            0b0011 => { let shift = self.r[rs] & 0xFF; self.r[rd] = if shift >= 32 { 0 } else { self.r[rd] >> shift }; }
+            0b0100 => { let shift = self.r[rs] & 0xFF; self.r[rd] = if shift >= 32 { if (self.r[rd] >> 31) & 1 == 1 { 0xFFFFFFFF } else { 0 } } else { ((self.r[rd] as i32) >> shift) as u32 }; }
+            0b0101 => { let c = (self.cpsr >> 29) & 1; self.r[rd] = self.r[rd].wrapping_add(self.r[rs]).wrapping_add(c); }
+            0b0110 => { let c = (self.cpsr >> 29) & 1; self.r[rd] = self.r[rd].wrapping_sub(self.r[rs]).wrapping_sub(1 - c); }
+            0b0111 => { let shift = self.r[rs] & 0xFF; self.r[rd] = if shift == 0 { self.r[rd] } else { self.r[rd].rotate_right(shift) }; }
+            0b1000 => { let result = self.r[rd] & self.r[rs]; self.update_flags(result, (self.cpsr >> 29) & 1, (result >> 31) & 1, false); }
+            0b1001 => self.r[rd] = 0u32.wrapping_sub(self.r[rs]),
+            0b1010 => { let result = self.r[rd].wrapping_sub(self.r[rs]); let carry = if self.r[rd] >= self.r[rs] { 1 } else { 0 }; let overflow = ((self.r[rd] ^ self.r[rs]) & (self.r[rd] ^ result)) >> 31 == 1; self.update_flags(result, carry, (result >> 31) & 1, overflow); }
+            0b1011 => { let result = self.r[rd].wrapping_add(self.r[rs]); let carry = if (self.r[rd] as u64 + self.r[rs] as u64) > 0xFFFFFFFF { 1 } else { 0 }; let overflow = ((self.r[rd] ^ result) & (self.r[rs] ^ result)) >> 31 == 1; self.update_flags(result, carry, (result >> 31) & 1, overflow); }
+            0b1100 => self.r[rd] = self.r[rd] | self.r[rs],
+            0b1101 => self.r[rd] = self.r[rd].wrapping_mul(self.r[rs]),
+            0b1110 => self.r[rd] = self.r[rd] & !self.r[rs],
+            0b1111 => self.r[rd] = !self.r[rs],
+            _ => {}
+        }
+    }
+
+    fn execute_thumb_3(&mut self, opcode: u16, bus: &mut Bus) {
+        let l = (opcode >> 11) & 1;
+        let b = (opcode >> 12) & 1;
+        let rd = (opcode & 7) as usize;
+        let rb = ((opcode >> 3) & 7) as usize;
+        let offset = ((opcode >> 6) & 0x1F) as u32;
+        let addr = self.r[rb].wrapping_add(if b == 1 { offset } else { offset << 2 });
+        if l == 1 {
+            if b == 1 { self.r[rd] = bus.read8(addr) as u32; }
+            else { self.r[rd] = bus.read32(addr & !3); }
+        } else {
+            if b == 1 { bus.write8(addr, self.r[rd] as u8); }
+            else { bus.write32(addr & !3, self.r[rd]); }
+        }
+    }
+
+    fn execute_thumb_4(&mut self, opcode: u16) {
+        let h1 = (opcode >> 7) & 1;
+        let h2 = (opcode >> 6) & 1;
+        let op = (opcode >> 8) & 3;
+        let rs = ((opcode >> 3) & 0xF) as usize;
+        let rd = ((opcode & 7) as usize) | ((h1 as usize) << 3);
+        match op {
+            0b00 => self.r[rd] = self.r[rd].wrapping_add(self.r[rs]),
+            0b01 => { let result = self.r[rd].wrapping_sub(self.r[rs]); let carry = if self.r[rd] >= self.r[rs] { 1 } else { 0 }; let overflow = ((self.r[rd] ^ self.r[rs]) & (self.r[rd] ^ result)) >> 31 == 1; self.update_flags(result, carry, (result >> 31) & 1, overflow); }
+            0b10 => self.r[rd] = self.r[rs],
+            0b11 => { if h1 == 0 { self.r[15] = self.r[rs] & !1; self.thumb = (self.r[rs] & 1) != 0; } }
+            _ => {}
+        }
+    }
+
+    fn execute_thumb_5(&mut self, opcode: u16, bus: &mut Bus) {
+        let rd = ((opcode >> 8) & 7) as usize;
+        let sub_op = (opcode >> 11) & 3;
+        if sub_op == 0 {
+            let imm = ((opcode & 0xFF) as u32) << 2;
+            let addr = (self.r[15] & !2).wrapping_add(imm);
+            self.r[rd] = bus.read32(addr & !3);
+        } else if sub_op == 2 {
+            let imm = ((opcode & 0xFF) as u32) << 2;
+            let addr = self.r[13].wrapping_add(imm);
+            bus.write32(addr & !3, self.r[rd]);
+        } else if sub_op == 3 {
+            let imm = ((opcode & 0xFF) as u32) << 2;
+            let addr = self.r[13].wrapping_add(imm);
+            self.r[rd] = bus.read32(addr & !3);
+        }
+    }
+
+    fn execute_thumb_6(&mut self, opcode: u16, bus: &mut Bus) {
+        let l = (opcode >> 11) & 1;
+        let r = (opcode >> 8) & 1;
+        let rlist = opcode & 0xFF;
+        if l == 0 {
+            // PUSH
+            let mut addr = self.r[13];
+            for i in (0..8).rev() {
+                if (rlist >> i) & 1 != 0 {
+                    addr = addr.wrapping_sub(4);
+                    bus.write32(addr & !3, self.r[i]);
+                }
+            }
+            if r == 1 {
+                addr = addr.wrapping_sub(4);
+                bus.write32(addr & !3, self.r[14]);
+            }
+            self.r[13] = addr;
+        } else {
+            // POP
+            let mut addr = self.r[13];
+            for i in 0..8 {
+                if (rlist >> i) & 1 != 0 {
+                    self.r[i] = bus.read32(addr & !3);
+                    addr = addr.wrapping_add(4);
+                }
+            }
+            if r == 1 {
+                let val = bus.read32(addr & !3);
+                self.r[15] = val & !1;
+                self.thumb = (val & 1) != 0;
+                addr = addr.wrapping_add(4);
+            }
+            self.r[13] = addr;
+        }
+    }
+
+    fn execute_thumb_7(&mut self, opcode: u16) {
+        if (opcode >> 12) & 1 == 0 {
+            let cond = (opcode >> 8) & 0xF;
+            let offset = (opcode & 0xFF) as i8;
+            if self.check_condition_thumb(cond as u32) {
+                self.r[15] = self.r[15].wrapping_add((offset as i32 * 2) as u32);
+            }
+        } else if (opcode >> 12) & 1 == 1 && (opcode >> 8) & 1 == 0 {
+            let offset = (opcode & 0x7FF) as i32;
+            let signed_off = if (offset >> 10) & 1 == 1 { offset | !0x7FF } else { offset };
+            self.r[14] = self.r[15].wrapping_add((signed_off << 12) as u32);
+        } else {
+            self.execute_thumb_bl(opcode);
         }
     }
 
