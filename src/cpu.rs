@@ -257,7 +257,7 @@ impl Cpu {
     fn step_thumb(&mut self, bus: &mut Bus) -> u32 {
         let pc = self.r[15] & !1;
         let opcode = bus.read16(pc);
-        self.r[15] = pc + 4;
+        self.r[15] = pc + 2;
         self.execute_thumb(opcode, bus);
         self.r[15] = self.r[15] & !1;
         1
