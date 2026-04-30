@@ -66,6 +66,8 @@ impl Cpu {
         let old_mode = self.mode;
         let old_cpsr = self.cpsr;
         self.switch_mode(MODE_IRQ as u8);
+        let spsr_idx = spsr_idx(old_mode);
+        self.reg_bank.spsr[spsr_idx] = old_cpsr;
         self.cpsr = (self.cpsr & !0x1F) | MODE_IRQ | (1 << 7);
         self.thumb = false;
         self.r[14] = self.r[15] + 4;
@@ -170,40 +172,21 @@ impl Cpu {
     }
 
     pub fn step_trace(&mut self, bus: &mut Bus, _interrupts: &mut InterruptController) -> (u32, String) {
-        let pc = self.r[15] & (!3);
-        let opcode = bus.read32(pc);
+        let pc = self.r[15];
+        let (opcode, opcode_str) = if self.thumb {
+            let op = bus.read16(pc & !1);
+            (op as u32, format!("0x{:04X}", op))
+        } else {
+            let op = bus.read32(pc & !3);
+            (op, format!("0x{:08X}", op))
+        };
         
         eprint!("PC=0x{:08X} r14=0x{:08X} cpsr=0x{:08X} ", pc, self.r[14], self.cpsr);
         
         let cycles = self.step(bus, _interrupts);
         
-        let mut opcode_desc = format!("op=0x{:08X}", opcode);
-        
-        // Decode instruction
-        let op_type = (opcode >> 25) & 7;
-        let bit27 = (opcode >> 27) & 1;
-        if bit27 == 1 {
-            if op_type == 0b101 {
-                opcode_desc.push_str(" [BRANCH]");
-            }
-        } else if op_type == 0b000 {
-            if (opcode >> 24) & 0xF == 0x9 && (opcode >> 4) & 1 == 1 {
-                opcode_desc.push_str(" [MULT/HW]");
-            } else if (opcode & 0x0FFFFFF0) == 0x012FFF10 {
-                opcode_desc.push_str(" [BX]");
-            } else if (opcode & 0x0DB0F000) == 0x01000000 {
-                opcode_desc.push_str(" [MRS]");
-            } else if (opcode & 0x0DB0F010) == 0x0120F000 {
-                opcode_desc.push_str(" [MSR]");
-            } else {
-                let dp_op = (opcode >> 21) & 0xF;
-                let dp_names = ["AND","EOR","SUB","RSB","ADD","ADC","SBC","RSC","TST","TEQ","CMP","CMN","ORR","MOV","BIC","MVN"];
-                opcode_desc.push_str(&format!(" [{}]", dp_names[dp_op as usize]));
-            }
-        }
-        
-        eprintln!("{} -> r15=0x{:08X}", opcode_desc, self.r[15]);
-        (cycles, opcode_desc)
+        eprintln!("op={} -> r15=0x{:08X} thumb={}", opcode_str, self.r[15], self.thumb);
+        (cycles, opcode_str)
     }
 
     fn step_arm(&mut self, bus: &mut Bus) -> u32 {
@@ -282,18 +265,22 @@ impl Cpu {
 
 
     fn execute_thumb(&mut self, opcode: u16, bus: &mut Bus) {
-        let op = (opcode >> 12) & 0xF;
+        let op = (opcode >> 13) & 7;
         match op {
-            0x0 | 0x1 => self.execute_thumb_move_shifted(opcode),
-            0x2 | 0x3 => self.execute_thumb_immediate(opcode),
-            0x4 => self.execute_thumb_alu(opcode),
-            0x5 => self.execute_thumb_hi_reg_bx(opcode),
-            0x6 | 0x7 => self.execute_thumb_load_store_reg(opcode, bus),
-            0x8 | 0x9 => self.execute_thumb_load_store_imm(opcode, bus),
-            0xA | 0xB => self.execute_thumb_sp_pc_push_pop(opcode, bus),
-            0xC | 0xD => self.execute_thumb_cond_branch(opcode),
-            0xE => self.execute_thumb_uncond_branch(opcode),
-            0xF => self.execute_thumb_bl(opcode),
+            0b000 => self.execute_thumb_0(opcode),
+            0b001 => self.execute_thumb_1(opcode),
+            0b010 => {
+                if ((opcode >> 10) & 1) == 0 {
+                    self.execute_thumb_2(opcode);
+                } else {
+                    self.execute_thumb_4(opcode);
+                }
+            }
+            0b011 => self.execute_thumb_3(opcode, bus),
+            0b100 => self.execute_thumb_5(opcode, bus),
+            0b101 => self.execute_thumb_6(opcode, bus),
+            0b110 => self.execute_thumb_7(opcode),
+            0b111 => self.execute_thumb_8(opcode),
             _ => {}
         }
     }
@@ -390,32 +377,34 @@ impl Cpu {
         let h1 = (opcode >> 7) & 1;
         let h2 = (opcode >> 6) & 1;
         let op = (opcode >> 8) & 3;
-        let rs = ((opcode >> 3) & 0xF) as usize;
+        let rs = (((opcode >> 3) & 7) as usize) | ((h2 as usize) << 3);
         let rd = ((opcode & 7) as usize) | ((h1 as usize) << 3);
         match op {
             0b00 => self.r[rd] = self.r[rd].wrapping_add(self.r[rs]),
             0b01 => { let result = self.r[rd].wrapping_sub(self.r[rs]); let carry = if self.r[rd] >= self.r[rs] { 1 } else { 0 }; let overflow = ((self.r[rd] ^ self.r[rs]) & (self.r[rd] ^ result)) >> 31 == 1; self.update_flags(result, carry, (result >> 31) & 1, overflow); }
             0b10 => self.r[rd] = self.r[rs],
-            0b11 => { if h1 == 0 { self.r[15] = self.r[rs] & !1; self.thumb = (self.r[rs] & 1) != 0; } }
+            0b11 => { self.r[15] = self.r[rs] & !1; self.thumb = (self.r[rs] & 1) != 0; }
             _ => {}
         }
     }
 
     fn execute_thumb_5(&mut self, opcode: u16, bus: &mut Bus) {
         let rd = ((opcode >> 8) & 7) as usize;
-        let sub_op = (opcode >> 11) & 3;
-        if sub_op == 0 {
+        let bit12 = (opcode >> 12) & 1;
+        if bit12 == 0 {
+            // LDR Rd, [PC, #imm*4]
             let imm = ((opcode & 0xFF) as u32) << 2;
             let addr = (self.r[15] & !2).wrapping_add(imm);
             self.r[rd] = bus.read32(addr & !3);
-        } else if sub_op == 2 {
+        } else {
+            let l = (opcode >> 11) & 1;
             let imm = ((opcode & 0xFF) as u32) << 2;
             let addr = self.r[13].wrapping_add(imm);
-            bus.write32(addr & !3, self.r[rd]);
-        } else if sub_op == 3 {
-            let imm = ((opcode & 0xFF) as u32) << 2;
-            let addr = self.r[13].wrapping_add(imm);
-            self.r[rd] = bus.read32(addr & !3);
+            if l == 0 {
+                bus.write32(addr & !3, self.r[rd]);
+            } else {
+                self.r[rd] = bus.read32(addr & !3);
+            }
         }
     }
 
@@ -458,16 +447,25 @@ impl Cpu {
 
     fn execute_thumb_7(&mut self, opcode: u16) {
         if (opcode >> 12) & 1 == 0 {
+            // Conditional branch
             let cond = (opcode >> 8) & 0xF;
             let offset = (opcode & 0xFF) as i8;
             if self.check_condition_thumb(cond as u32) {
                 self.r[15] = self.r[15].wrapping_add((offset as i32 * 2) as u32);
             }
-        } else if (opcode >> 12) & 1 == 1 && (opcode >> 8) & 1 == 0 {
+        } else {
+            // SWI
+        }
+    }
+
+    fn execute_thumb_8(&mut self, opcode: u16) {
+        if (opcode >> 11) & 1 == 0 {
+            // BL prefix (low offset)
             let offset = (opcode & 0x7FF) as i32;
             let signed_off = if (offset >> 10) & 1 == 1 { offset | !0x7FF } else { offset };
             self.r[14] = self.r[15].wrapping_add((signed_off << 12) as u32);
         } else {
+            // BL suffix
             self.execute_thumb_bl(opcode);
         }
     }
