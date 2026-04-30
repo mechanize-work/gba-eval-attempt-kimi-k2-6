@@ -39,8 +39,8 @@ impl Cpu {
             thumb: false,
             halt: false,
             reg_bank: RegBank {
-                user: [0; 7], fiq: [0; 7], irq: [0; 2], svc: [0; 2],
-                abt: [0; 2], und: [0; 2], spsr: [0; 5],
+                fiq_r8_r14: [0; 7], irq_r13_r14: [0; 2], svc_r13_r14: [0; 2],
+                abt_r13_r14: [0; 2], und_r13_r14: [0; 2], spsr: [0; 5],
             },
         }
     }
@@ -108,50 +108,50 @@ impl Cpu {
     }
 
     fn save_bank(&mut self, mode: u8) {
-        match mode {
-            m if m == MODE_FIQ as u8 => {
-                for i in 0..7 { self.reg_bank.fiq[i] = self.r[8 + i]; }
+        match mode as u32 {
+            MODE_FIQ => {
+                for i in 0..7 { self.reg_bank.fiq_r8_r14[i] = self.r[8 + i]; }
             }
-            m if m == MODE_IRQ as u8 => {
-                self.reg_bank.irq[0] = self.r[13];
-                self.reg_bank.irq[1] = self.r[14];
+            MODE_IRQ => {
+                self.reg_bank.irq_r13_r14[0] = self.r[13];
+                self.reg_bank.irq_r13_r14[1] = self.r[14];
             }
-            m if m == MODE_SVC as u8 => {
-                self.reg_bank.svc[0] = self.r[13];
-                self.reg_bank.svc[1] = self.r[14];
+            MODE_SVC => {
+                self.reg_bank.svc_r13_r14[0] = self.r[13];
+                self.reg_bank.svc_r13_r14[1] = self.r[14];
             }
-            m if m == MODE_ABT as u8 => {
-                self.reg_bank.abt[0] = self.r[13];
-                self.reg_bank.abt[1] = self.r[14];
+            MODE_ABT => {
+                self.reg_bank.abt_r13_r14[0] = self.r[13];
+                self.reg_bank.abt_r13_r14[1] = self.r[14];
             }
-            m if m == MODE_UND as u8 => {
-                self.reg_bank.und[0] = self.r[13];
-                self.reg_bank.und[1] = self.r[14];
+            MODE_UND => {
+                self.reg_bank.und_r13_r14[0] = self.r[13];
+                self.reg_bank.und_r13_r14[1] = self.r[14];
             }
             _ => {}
         }
     }
 
     fn restore_bank(&mut self, mode: u8) {
-        match mode {
-            m if m == MODE_FIQ as u8 => {
-                for i in 0..7 { self.r[8 + i] = self.reg_bank.fiq[i]; }
+        match mode as u32 {
+            MODE_FIQ => {
+                for i in 0..7 { self.r[8 + i] = self.reg_bank.fiq_r8_r14[i]; }
             }
-            m if m == MODE_IRQ as u8 => {
-                self.r[13] = self.reg_bank.irq[0];
-                self.r[14] = self.reg_bank.irq[1];
+            MODE_IRQ => {
+                self.r[13] = self.reg_bank.irq_r13_r14[0];
+                self.r[14] = self.reg_bank.irq_r13_r14[1];
             }
-            m if m == MODE_SVC as u8 => {
-                self.r[13] = self.reg_bank.svc[0];
-                self.r[14] = self.reg_bank.svc[1];
+            MODE_SVC => {
+                self.r[13] = self.reg_bank.svc_r13_r14[0];
+                self.r[14] = self.reg_bank.svc_r13_r14[1];
             }
-            m if m == MODE_ABT as u8 => {
-                self.r[13] = self.reg_bank.abt[0];
-                self.r[14] = self.reg_bank.abt[1];
+            MODE_ABT => {
+                self.r[13] = self.reg_bank.abt_r13_r14[0];
+                self.r[14] = self.reg_bank.abt_r13_r14[1];
             }
-            m if m == MODE_UND as u8 => {
-                self.r[13] = self.reg_bank.und[0];
-                self.r[14] = self.reg_bank.und[1];
+            MODE_UND => {
+                self.r[13] = self.reg_bank.und_r13_r14[0];
+                self.r[14] = self.reg_bank.und_r13_r14[1];
             }
             _ => {}
         }
