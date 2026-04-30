@@ -81,6 +81,9 @@ impl Emulator {
     }
 
     fn run_frame(&mut self) {
+        // Update KEYINPUT from keypad state
+        self.bus.keyinput = !((self.keypad.keys & 0x3FF) as u16) & 0x03FF;
+        
         let target_cycles = 280896;
         while self.cycles_this_frame < target_cycles {
             let dma_cycles = self.dma.step(&mut self.bus, &mut self.interrupts);
@@ -114,6 +117,7 @@ pub extern "C" fn emu_init() -> i32 {
     1
 }
 
+#[allow(static_mut_refs)]
 static mut ROM_BUFFER: Vec<u8> = Vec::new();
 
 #[no_mangle]

@@ -12,6 +12,7 @@ pub struct Bus {
     pub dispcnt: u16,
     pub dispstat: u16,
     pub vcount: u16,
+    pub keyinput: u16,
     pub keycnt: u16,
 }
 
@@ -34,6 +35,7 @@ impl Bus {
             dispcnt: 0,
             dispstat: 0,
             vcount: 0,
+            keyinput: 0x03FF,
             keycnt: 0,
         }
     }
@@ -53,6 +55,7 @@ impl Bus {
         self.dispcnt = 0;
         self.dispstat = 0;
         self.vcount = 0;
+        self.keyinput = 0x03FF; // All keys released
         self.keycnt = 0;
     }
 
@@ -169,6 +172,13 @@ impl Bus {
             0x05 => ((self.dispstat >> 8) & 0xFF) as u8,
             0x06 => (self.vcount & 0xFF) as u8,
             0x07 => ((self.vcount >> 8) & 0xFF) as u8,
+            0x08 | 0x09 | 0x0A | 0x0B | 0x0C | 0x0D | 0x0E | 0x0F => self.io[offset],
+            0x10 | 0x11 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 | 0x17 => self.io[offset],
+            0x30 | 0x31 => self.io[offset],
+            0x48 | 0x49 | 0x4A | 0x4B => self.io[offset],
+            0x50 | 0x51 | 0x52 | 0x53 | 0x54 | 0x55 => self.io[offset],
+            0x130 => (self.keyinput & 0xFF) as u8,
+            0x131 => ((self.keyinput >> 8) & 0xFF) as u8,
             _ => self.io[offset],
         }
     }

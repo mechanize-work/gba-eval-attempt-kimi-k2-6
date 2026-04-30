@@ -11,28 +11,18 @@ fn main() {
     }
     emu_load_rom(rom_data.len() as i32);
     
-    // Run 120 frames
+    // Press Start
+    emu_set_keys(0x008);
+    
     for i in 0..120 {
         emu_run_frame();
+        if i == 5 { emu_set_keys(0x000); }
     }
     
-    // Read framebuffer
     let fb_ptr = emu_framebuffer();
     let fb = unsafe { std::slice::from_raw_parts(fb_ptr, 240 * 160) };
-    
     let black = fb.iter().filter(|&&p| p == 0xFF000000).count();
     let white = fb.iter().filter(|&&p| p == 0xFFFFFFFF).count();
     let other = fb.len() - black - white;
-    eprintln!("Frame 120: black={}, white={}, other={}", black, white, other);
-    
-    // Show some pixels
-    for y in [0, 80, 159] {
-        let row_start = y * 240;
-        let mut line = String::new();
-        for x in [0, 60, 120, 180, 239] {
-            let p = fb[row_start + x];
-            line.push_str(&format!("({},{})=0x{:08X} ", x, y, p));
-        }
-        eprintln!("{}", line);
-    }
+    eprintln!("After 120 frames with Start: black={}, white={}, other={}", black, white, other);
 }
