@@ -205,12 +205,12 @@ impl Cpu {
                 } else {
                     self.execute_halfword_transfer(opcode, bus);
                 }
-            } else if (opcode >> 21) & 1 == 1 && (opcode >> 23) & 3 == 2 && (opcode >> 24) & 1 == 0 {
-                // MSR
-                self.execute_msr(opcode);
-            } else if (opcode >> 22) & 3 == 2 && (opcode >> 20) & 1 == 0 {
-                // MRS
-                self.execute_mrs(opcode);
+            } else if (opcode & 0x0F000000) == 0x01000000 {
+                if ((opcode >> 21) & 1) == 0 {
+                    self.execute_mrs(opcode);
+                } else {
+                    self.execute_msr(opcode);
+                }
             } else {
                 self.execute_data_processing(opcode, pc_plus_8);
             }
