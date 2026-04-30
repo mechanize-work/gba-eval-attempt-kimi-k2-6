@@ -172,6 +172,8 @@ impl Cpu {
     fn step_arm(&mut self, bus: &mut Bus) -> u32 {
         let pc = self.r[15] & !3;
         let opcode = bus.read32(pc);
+        // PC+8 is the architectural PC during execution of this instruction
+        let pc_plus_8 = pc.wrapping_add(8);
         self.r[15] = pc + 4;
 
         let cond = (opcode >> 28) & 0xF;
@@ -184,7 +186,7 @@ impl Cpu {
 
         if bit27 == 1 {
             if bits2526 & 6 == 4 { // Branch/link
-                self.execute_branch(opcode);
+                self.execute_branch(opcode, pc_plus_8);
             } else if bits2526 & 6 == 6 { // SWI
                 self.execute_swi(opcode, bus);
             }
@@ -203,15 +205,15 @@ impl Cpu {
                 // MRS
                 self.execute_mrs(opcode);
             } else {
-                self.execute_data_processing(opcode);
+                self.execute_data_processing(opcode, pc_plus_8);
             }
         } else if bits2526 == 1 {
             self.execute_load_store(opcode, bus);
         } else if bits2526 == 2 {
             if (opcode >> 24) & 1 == 1 { // Branch
-                self.execute_branch(opcode);
+                self.execute_branch(opcode, pc_plus_8);
             } else { // Block data transfer
-                self.execute_block_transfer(opcode, bus);
+                self.execute_block_transfer(opcode, bus, pc_plus_8);
             }
         } else if bits2526 == 3 {
             self.execute_coprocessor(opcode);
@@ -390,7 +392,7 @@ impl Cpu {
         }
     }
 
-    fn execute_data_processing(&mut self, opcode: u32) {
+    fn execute_data_processing(&mut self, opcode: u32, pc_plus_8: u32) {
         let op = (opcode >> 21) & 0xF;
         let s = ((opcode >> 20) & 1) != 0;
         let rn = ((opcode >> 16) & 0xF) as usize;
@@ -646,7 +648,7 @@ impl Cpu {
         }
     }
 
-    fn execute_branch(&mut self, opcode: u32) {
+    fn execute_branch(&mut self, opcode: u32, pc_plus_8: u32) {
         let link = ((opcode >> 24) & 1) != 0;
         let offset = (opcode & 0xFFFFFF) as i32;
         let signed_offset = if offset & 0x800000 != 0 {
@@ -656,10 +658,10 @@ impl Cpu {
         };
 
         if link {
-            self.r[14] = self.r[15] - 4;
+            self.r[14] = pc_plus_8.wrapping_sub(4);
         }
 
-        self.r[15] = ((self.r[15] as i32).wrapping_add(signed_offset << 2)) as u32;
+        self.r[15] = ((pc_plus_8 as i32).wrapping_add(signed_offset << 2)) as u32;
     }
 
     fn execute_mrs(&mut self, opcode: u32) {
