@@ -23,17 +23,28 @@ const FRAME_HEIGHT: usize = 160;
 const AUDIO_RATE: i32 = 32768;
 const AUDIO_BUFFER_SAMPLES: usize = AUDIO_RATE as usize / 60 * 4;
 
+#[no_mangle]
+pub extern "C" fn emu_debug_pc() -> u32 {
+    unsafe {
+        if let Some(ref mut emu) = EMULATOR {
+            emu.cpu.r[15]
+        } else {
+            0
+        }
+    }
+}
+
 static mut EMULATOR: Option<Box<Emulator>> = None;
 
-struct Emulator {
-    cpu: Cpu,
-    bus: Bus,
-    ppu: Ppu,
-    apu: Apu,
-    dma: Dma,
-    timers: Timers,
-    keypad: Keypad,
-    interrupts: InterruptController,
+pub struct Emulator {
+    pub cpu: Cpu,
+    pub bus: Bus,
+    pub ppu: Ppu,
+    pub apu: Apu,
+    pub dma: Dma,
+    pub timers: Timers,
+    pub keypad: Keypad,
+    pub interrupts: InterruptController,
     framebuffer: Vec<u32>,
     audio_buffer: Vec<i16>,
     audio_samples: usize,

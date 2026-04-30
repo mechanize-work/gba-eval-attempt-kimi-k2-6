@@ -5,8 +5,8 @@ use crate::bus::Bus;
 use crate::interrupt::InterruptController;
 
 pub struct Cpu {
-    r: [u32; 16],
-    cpsr: u32,
+    pub r: [u32; 16],
+    pub cpsr: u32,
     mode: u8,
     thumb: bool,
     halt: bool,
