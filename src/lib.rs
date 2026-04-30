@@ -23,17 +23,6 @@ const FRAME_HEIGHT: usize = 160;
 const AUDIO_RATE: i32 = 32768;
 const AUDIO_BUFFER_SAMPLES: usize = AUDIO_RATE as usize / 60 * 4;
 
-#[no_mangle]
-pub extern "C" fn emu_debug_pc() -> u32 {
-    unsafe {
-        if let Some(ref mut emu) = EMULATOR {
-            emu.cpu.r[15]
-        } else {
-            0
-        }
-    }
-}
-
 static mut EMULATOR: Option<Box<Emulator>> = None;
 
 pub struct Emulator {
@@ -88,6 +77,7 @@ impl Emulator {
         self.audio_buffer.fill(0);
         self.audio_samples = 0;
         self.cycles_this_frame = 0;
+        self.cpu.r[15] = 0x00000000;
     }
 
     fn run_frame(&mut self) {
@@ -172,6 +162,29 @@ pub extern "C" fn emu_run_frame() {
     unsafe {
         if let Some(ref mut emu) = EMULATOR {
             emu.run_frame();
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn emu_debug_pc() -> u32 {
+    unsafe {
+        if let Some(ref mut emu) = EMULATOR {
+            emu.cpu.r[15]
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn emu_debug_step_trace() -> i32 {
+    unsafe {
+        if let Some(ref mut emu) = EMULATOR {
+            let (cycles, _trace) = emu.cpu.step_trace(&mut emu.bus, &mut emu.interrupts);
+            cycles as i32
+        } else {
+            0
         }
     }
 }

@@ -173,7 +173,9 @@ impl Cpu {
         let pc = self.r[15] & (!3);
         let opcode = bus.read32(pc);
         let cycles = self.step(bus, interrupts);
-        (cycles, format!("PC=0x{:08X} opcode=0x{:08X}", pc, opcode))
+        let trace = format!("PC=0x{:08X} opcode=0x{:08X}", pc, opcode);
+        eprintln!("{}", trace);
+        (cycles, trace)
     }
 
     fn step_arm(&mut self, bus: &mut Bus) -> u32 {
