@@ -169,6 +169,13 @@ impl Cpu {
         }
     }
 
+    pub fn step_trace(&mut self, bus: &mut Bus, interrupts: &mut InterruptController) -> (u32, String) {
+        let pc = self.r[15] & (!3);
+        let opcode = bus.read32(pc);
+        let cycles = self.step(bus, interrupts);
+        (cycles, format!("PC=0x{:08X} opcode=0x{:08X}", pc, opcode))
+    }
+
     fn step_arm(&mut self, bus: &mut Bus) -> u32 {
         let pc = self.r[15] & !3;
         let opcode = bus.read32(pc);
@@ -213,7 +220,7 @@ impl Cpu {
             if (opcode >> 24) & 1 == 1 { // Branch
                 self.execute_branch(opcode, pc_plus_8);
             } else { // Block data transfer
-                self.execute_block_transfer(opcode, bus, pc_plus_8);
+                self.execute_block_transfer(opcode, bus);
             }
         } else if bits2526 == 3 {
             self.execute_coprocessor(opcode);
