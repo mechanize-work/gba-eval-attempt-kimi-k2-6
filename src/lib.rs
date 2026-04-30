@@ -1,4 +1,3 @@
-use std::alloc::{alloc, Layout};
 use std::slice;
 
 mod bus;
@@ -21,9 +20,8 @@ use interrupt::InterruptController;
 
 const FRAME_WIDTH: usize = 240;
 const FRAME_HEIGHT: usize = 160;
-const FRAMEBUFFER_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT * 4;
 const AUDIO_RATE: i32 = 32768;
-const AUDIO_BUFFER_SAMPLES: usize = AUDIO_RATE as usize / 60 * 2; // ~546 stereo pairs per frame, doubled for safety
+const AUDIO_BUFFER_SAMPLES: usize = AUDIO_RATE as usize / 60 * 4;
 
 static mut EMULATOR: Option<Box<Emulator>> = None;
 
@@ -40,7 +38,6 @@ struct Emulator {
     audio_buffer: Vec<i16>,
     audio_samples: usize,
     cycles_this_frame: u64,
-    total_cycles: u64,
 }
 
 impl Emulator {
@@ -58,7 +55,6 @@ impl Emulator {
             audio_buffer: vec![0; AUDIO_BUFFER_SAMPLES * 2],
             audio_samples: 0,
             cycles_this_frame: 0,
-            total_cycles: 0,
         }
     }
 
@@ -81,37 +77,27 @@ impl Emulator {
         self.audio_buffer.fill(0);
         self.audio_samples = 0;
         self.cycles_this_frame = 0;
-        self.total_cycles = 0;
     }
 
     fn run_frame(&mut self) {
-        let target_cycles_per_frame = 280896; // ~59.73 Hz at 16.78 MHz
-        
-        while self.cycles_this_frame < target_cycles_per_frame {
-            // Check DMA first
+        let target_cycles = 280896;
+        while self.cycles_this_frame < target_cycles {
             let dma_cycles = self.dma.step(&mut self.bus, &mut self.interrupts);
             if dma_cycles > 0 {
                 self.advance_cycles(dma_cycles);
                 continue;
             }
-
-            // Run CPU
             let cycles = self.cpu.step(&mut self.bus, &mut self.interrupts);
             self.advance_cycles(cycles);
-
-            // Handle interrupts
             if self.interrupts.irq_pending() && !self.cpu.irq_disabled() {
                 self.cpu.trigger_irq(&mut self.bus);
             }
         }
-        
-        self.cycles_this_frame -= target_cycles_per_frame;
+        self.cycles_this_frame -= target_cycles;
     }
 
     fn advance_cycles(&mut self, cycles: u32) {
         self.cycles_this_frame += cycles as u64;
-        self.total_cycles += cycles as u64;
-        
         self.ppu.step(cycles, &mut self.bus, &mut self.interrupts, &mut self.framebuffer);
         self.timers.step(cycles, &mut self.interrupts);
         self.apu.step(cycles, &mut self.audio_buffer, &mut self.audio_samples);
@@ -127,11 +113,12 @@ pub extern "C" fn emu_init() -> i32 {
     1
 }
 
+static mut ROM_BUFFER: Vec<u8> = Vec::new();
+
 #[no_mangle]
 pub extern "C" fn emu_rom_buffer() -> *mut u8 {
-    static mut ROM_BUFFER: Vec<u8> = Vec::new();
     unsafe {
-        ROM_BUFFER = vec![0u8; 32 * 1024 * 1024]; // 32 MiB
+        ROM_BUFFER = vec![0u8; 32 * 1024 * 1024];
         ROM_BUFFER.as_mut_ptr()
     }
 }
@@ -140,8 +127,7 @@ pub extern "C" fn emu_rom_buffer() -> *mut u8 {
 pub extern "C" fn emu_load_rom(len: i32) -> i32 {
     unsafe {
         if let Some(ref mut emu) = EMULATOR {
-            let rom_buffer = emu_rom_buffer();
-            let rom = slice::from_raw_parts(rom_buffer, len as usize);
+            let rom = slice::from_raw_parts(ROM_BUFFER.as_ptr(), len as usize);
             if emu.load_rom(rom) {
                 return 1;
             }
