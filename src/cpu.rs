@@ -635,7 +635,10 @@ impl Cpu {
         } else {
             if rd == 15 {
                 if s {
-                    self.cpsr = self.cpsr; // SPSR not implemented for now
+                    let mode_idx = spsr_idx(self.mode);
+                    let new_cpsr = self.reg_bank.spsr[mode_idx];
+                    self.cpsr = new_cpsr;
+                    self.thumb = ((new_cpsr >> 5) & 1) != 0;
                 }
                 self.r[15] = result;
             } else {
@@ -919,8 +922,12 @@ impl Cpu {
             }
             if (rlist & (1 << 15)) != 0 {
                 self.r[15] = self.r[15] & !3;
+                self.thumb = false;
                 if s == 1 {
-                    // Restore CPSR from SPSR
+                    let mode_idx = spsr_idx(self.mode);
+                    let new_cpsr = self.reg_bank.spsr[mode_idx];
+                    self.cpsr = new_cpsr;
+                    self.thumb = ((new_cpsr >> 5) & 1) != 0;
                 }
             }
         } else {
