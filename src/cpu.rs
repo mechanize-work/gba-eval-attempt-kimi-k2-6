@@ -207,11 +207,9 @@ impl Cpu {
                 } else {
                     self.execute_halfword_transfer(opcode, bus);
                 }
-            } else if (opcode >> 21) & 0xF == 0x0 && (opcode >> 20) & 1 == 0 && (opcode & 0xFFF) == 0 {
-                // MRS
+            } else if (opcode & 0x0DB0F000) == 0x01000000 {
                 self.execute_mrs(opcode);
-            } else if (opcode >> 21) & 0xF == 0x2 && (opcode >> 20) & 1 == 0 {
-                // MSR
+            } else if (opcode & 0x0DB0F000) == 0x0120F000 {
                 self.execute_msr(opcode);
             } else {
                 self.execute_data_processing(opcode, pc_plus_8);
