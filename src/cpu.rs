@@ -304,6 +304,7 @@ impl Cpu {
             let rs = ((opcode >> 3) & 7) as usize;
             let offset = ((opcode >> 6) & 0x1F) as u32;
             let shift_type = (opcode >> 11) & 3;
+            eprintln!("THUMB0 SHIFT rd={} rs={} offset={} shift_type={} r_rs=0x{:08X}", rd, rs, offset, shift_type, self.r[rs]);
             let result = match shift_type {
                 0b00 => if offset == 0 { self.r[rs] } else { self.r[rs] << offset },
                 0b01 => if offset == 0 { 0 } else { self.r[rs] >> offset },
