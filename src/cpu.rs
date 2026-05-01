@@ -307,7 +307,15 @@ impl Cpu {
                     self.execute_thumb_5(opcode, bus);
                 } else {
                     // 1001 = LDR/STR SP-relative
-                    self.execute_thumb_5_sp(opcode, bus);
+                    let rd = ((opcode >> 8) & 7) as usize;
+                    let l = (opcode >> 11) & 1;
+                    let imm = ((opcode & 0xFF) as u32) << 2;
+                    let addr = self.r[13].wrapping_add(imm);
+                    if l == 0 {
+                        bus.write32(addr & !3, self.r[rd]);
+                    } else {
+                        self.r[rd] = bus.read32(addr & !3);
+                    }
                 }
             }
             0b101 => {
@@ -328,14 +336,35 @@ impl Cpu {
                     }
                 } else {
                     // PUSH / POP
-                    self.execute_thumb_push_pop(opcode, bus);
+                    self.execute_thumb_6(opcode, bus);
                 }
             }
             0b110 => {
                 let bit12 = (opcode >> 12) & 1;
                 if bit12 == 0 {
                     // 1100 = LDMIA / STMIA
-                    self.execute_thumb_block(opcode, bus);
+                    let l = (opcode >> 11) & 1;
+                    let rlist = opcode & 0xFF;
+                    let mut addr = self.r[13];
+                    if l == 0 {
+                        // STMIA
+                        for i in 0..8 {
+                            if (rlist >> i) & 1 != 0 {
+                                bus.write32(addr & !3, self.r[i]);
+                                addr = addr.wrapping_add(4);
+                            }
+                        }
+                        self.r[13] = addr;
+                    } else {
+                        // LDMIA
+                        for i in 0..8 {
+                            if (rlist >> i) & 1 != 0 {
+                                self.r[i] = bus.read32(addr & !3);
+                                addr = addr.wrapping_add(4);
+                            }
+                        }
+                        self.r[13] = addr;
+                    }
                 } else {
                     // 1101 = conditional branch / SWI
                     let cond = (opcode >> 8) & 0xF;
@@ -351,15 +380,25 @@ impl Cpu {
                 }
             }
             0b111 => {
-                let bit12 = (opcode >> 12) & 1;
-                if bit12 == 1 {
-                    // BL / BLX suffix
-                    self.execute_thumb_bl(opcode);
-                } else {
-                    // unconditional branch
-                    let offset = (opcode & 0x7FF) as i32;
-                    let signed = if (offset >> 10) & 1 == 1 { offset | !0x7FF } else { offset };
-                    self.r[15] = self.r[15].wrapping_add((signed * 2) as u32);
+                let bits15_11 = (opcode >> 11) & 0x1F;
+                match bits15_11 {
+                    0b11100 => {
+                        // unconditional branch
+                        let offset = (opcode & 0x7FF) as i32;
+                        let signed = if (offset >> 10) & 1 == 1 { offset | !0x7FF } else { offset };
+                        self.r[15] = self.r[15].wrapping_add((signed * 2) as u32);
+                    }
+                    0b11110 => {
+                        // BL prefix
+                        let offset = (opcode & 0x7FF) as i32;
+                        let signed_off = if (offset >> 10) & 1 == 1 { offset | !0x7FF } else { offset };
+                        self.r[14] = self.r[15].wrapping_add((signed_off << 12) as u32);
+                    }
+                    0b11111 => {
+                        // BL suffix
+                        self.execute_thumb_bl(opcode);
+                    }
+                    _ => {}
                 }
             }
             _ => {}
