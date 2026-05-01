@@ -486,15 +486,34 @@ impl Cpu {
         let offset = (opcode & 0xFF) as u32;
         let op_type = ((opcode >> 11) & 3) as u32;
         match op_type {
-            0b00 => self.r[rd] = offset,
+            0b00 => {
+                // MOV Rd, #imm
+                self.r[rd] = offset;
+                self.update_flags(offset, (self.cpsr >> 29) & 1, (offset >> 31) & 1, false);
+            }
             0b01 => {
+                // CMP Rd, #imm - don't write result, but update flags
                 let result = self.r[rd].wrapping_sub(offset);
                 let carry = if self.r[rd] >= offset { 1 } else { 0 };
                 let overflow = ((self.r[rd] ^ offset) & (self.r[rd] ^ result)) >> 31 == 1;
                 self.update_flags(result, carry, (result >> 31) & 1, overflow);
             }
-            0b10 => self.r[rd] = self.r[rd].wrapping_add(offset),
-            0b11 => self.r[rd] = self.r[rd].wrapping_sub(offset),
+            0b10 => {
+                // ADD Rd, #imm
+                let result = self.r[rd].wrapping_add(offset);
+                let carry = if (self.r[rd] as u64 + offset as u64) > 0xFFFFFFFF { 1 } else { 0 };
+                let overflow = ((self.r[rd] ^ result) & (offset ^ result)) >> 31 == 1;
+                self.r[rd] = result;
+                self.update_flags(result, carry, (result >> 31) & 1, overflow);
+            }
+            0b11 => {
+                // SUB Rd, #imm
+                let result = self.r[rd].wrapping_sub(offset);
+                let carry = if self.r[rd] >= offset { 1 } else { 0 };
+                let overflow = ((self.r[rd] ^ offset) & (self.r[rd] ^ result)) >> 31 == 1;
+                self.r[rd] = result;
+                self.update_flags(result, carry, (result >> 31) & 1, overflow);
+            }
             _ => {}
         }
     }
