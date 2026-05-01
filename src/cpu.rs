@@ -344,8 +344,9 @@ impl Cpu {
                 if bit12 == 0 {
                     // 1100 = LDMIA / STMIA
                     let l = (opcode >> 11) & 1;
+                    let rb = ((opcode >> 8) & 7) as usize;
                     let rlist = opcode & 0xFF;
-                    let mut addr = self.r[13];
+                    let mut addr = self.r[rb];
                     if l == 0 {
                         // STMIA
                         for i in 0..8 {
@@ -354,7 +355,7 @@ impl Cpu {
                                 addr = addr.wrapping_add(4);
                             }
                         }
-                        self.r[13] = addr;
+                        self.r[rb] = addr;
                     } else {
                         // LDMIA
                         for i in 0..8 {
@@ -363,7 +364,7 @@ impl Cpu {
                                 addr = addr.wrapping_add(4);
                             }
                         }
-                        self.r[13] = addr;
+                        self.r[rb] = addr;
                     }
                 } else {
                     // 1101 = conditional branch / SWI
@@ -501,7 +502,7 @@ impl Cpu {
     fn execute_thumb_2(&mut self, opcode: u16) {
         let op = (opcode >> 6) & 0xF;
         let rs = ((opcode >> 3) & 7) as usize;
-        let rd = ((opcode & 7) | ((opcode >> 4) & 8)) as usize;
+        let rd = (opcode & 7) as usize;
         match op {
             0b0000 => self.r[rd] = self.r[rd] & self.r[rs],
             0b0001 => self.r[rd] = self.r[rd] ^ self.r[rs],
