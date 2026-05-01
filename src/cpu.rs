@@ -257,7 +257,7 @@ impl Cpu {
     fn step_thumb(&mut self, bus: &mut Bus) -> u32 {
         let pc = self.r[15] & !1;
         let opcode = bus.read16(pc);
-        self.r[15] = pc + 2;
+        self.r[15] = pc + 4;
         self.execute_thumb(opcode, bus);
         self.r[15] = self.r[15] & !1;
         1
@@ -298,16 +298,16 @@ impl Cpu {
             }
             0b011 => {
                 // LDR/STR immediate offset word/byte
-                self.execute_thumb_ldr_str_imm(opcode, bus);
+                self.execute_thumb_3(opcode, bus);
             }
             0b100 => {
                 let bit12 = (opcode >> 12) & 1;
                 if bit12 == 0 {
                     // 1000 = halfword / sign-extended byte/halfword
-                    self.execute_thumb_halfword(opcode, bus);
+                    self.execute_thumb_5(opcode, bus);
                 } else {
                     // 1001 = LDR/STR SP-relative
-                    self.execute_thumb_ldr_str_sp(opcode, bus);
+                    self.execute_thumb_5_sp(opcode, bus);
                 }
             }
             0b101 => {
