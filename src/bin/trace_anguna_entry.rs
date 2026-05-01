@@ -10,13 +10,21 @@ fn main() {
     }
     emu_load_rom(rom_data.len() as i32);
 
-    for i in 0..500 {
+    for i in 0..100 {
         let pc = emu_debug_pc();
-        if i < 30 || (pc >= 0x08000108 && pc <= 0x08000140) || (pc >= 0x08000170 && pc <= 0x080001B0) {
+        if i < 50 || (pc >= 0x08000126 && pc <= 0x080001B0) {
             emu_debug_step_trace();
         } else {
+            // fast trace
             emu_debug_step_trace();
         }
-        if pc < 0x08000000 && pc >= 0x00004000 { break; }
+        if pc >= 0x02000000 && pc < 0x03000000 {
+            eprintln!("JUMPED TO EWRAM!  Stopping.");
+            break;
+        }
+        if pc >= 0x0A000000 {
+            eprintln!("JUMPED OUT OF ROM!  Stopping.");
+            break;
+        }
     }
 }

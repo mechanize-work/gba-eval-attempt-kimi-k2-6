@@ -408,30 +408,75 @@ impl Cpu {
 
     fn execute_thumb_0(&mut self, opcode: u16) {
         if (opcode >> 11) & 3 == 3 {
+            // ADD/SUB (format 2) - always updates flags
             let rd = (opcode & 7) as usize;
             let rs = ((opcode >> 3) & 7) as usize;
             let rn_offset = ((opcode >> 6) & 7) as u32;
             let i = (opcode >> 10) & 1;
             let sub = (opcode >> 9) & 1;
             let val = if i != 0 { rn_offset } else { self.r[rn_offset as usize] };
+            let (result, carry, overflow);
             if sub != 0 {
-                self.r[rd] = self.r[rs].wrapping_sub(val);
+                result = self.r[rs].wrapping_sub(val);
+                carry = if self.r[rs] >= val { 1 } else { 0 };
+                overflow = ((self.r[rs] ^ val) & (self.r[rs] ^ result)) >> 31 == 1;
             } else {
-                self.r[rd] = self.r[rs].wrapping_add(val);
+                result = self.r[rs].wrapping_add(val);
+                carry = if (self.r[rs] as u64 + val as u64) > 0xFFFFFFFF { 1 } else { 0 };
+                overflow = ((self.r[rs] ^ result) & (val ^ result)) >> 31 == 1;
             }
+            self.r[rd] = result;
+            self.update_flags(result, carry, (result >> 31) & 1, overflow);
         } else {
+            // Move shifted register (format 1) - always updates flags
             let rd = (opcode & 7) as usize;
             let rs = ((opcode >> 3) & 7) as usize;
             let offset = ((opcode >> 6) & 0x1F) as u32;
             let shift_type = (opcode >> 11) & 3;
-            let result = match shift_type {
-                0b00 => if offset == 0 { self.r[rs] } else { self.r[rs] << offset },
-                0b01 => if offset == 0 { 0 } else { self.r[rs] >> offset },
-                0b10 => if offset == 0 { if (self.r[rs] >> 31) & 1 == 1 { 0xFFFFFFFF } else { 0 } } else { ((self.r[rs] as i32) >> offset) as u32 },
-                0b11 => if offset == 0 { self.r[rs].rotate_right(1) | ((self.cpsr >> 29) & 1) << 31 } else { self.r[rs].rotate_right(offset) },
-                _ => self.r[rs],
+            let val = self.r[rs];
+            let (result, carry) = match shift_type {
+                0b00 => { // LSL
+                    if offset == 0 {
+                        (val, (self.cpsr >> 29) & 1)
+                    } else {
+                        let c = (val >> (32 - offset)) & 1;
+                        (val << offset, c)
+                    }
+                }
+                0b01 => { // LSR
+                    if offset == 0 {
+                        (0, (val >> 31) & 1)
+                    } else {
+                        let c = (val >> (offset - 1)) & 1;
+                        (val >> offset, c)
+                    }
+                }
+                0b10 => { // ASR
+                    if offset == 0 {
+                        if (val >> 31) & 1 == 1 {
+                            (0xFFFFFFFF, (self.cpsr >> 29) & 1)
+                        } else {
+                            (0, (self.cpsr >> 29) & 1)
+                        }
+                    } else {
+                        let c = (val >> (offset - 1)) & 1;
+                        (((val as i32) >> offset) as u32, c)
+                    }
+                }
+                0b11 => { // ROR
+                    if offset == 0 {
+                        let c = val & 1;
+                        let result = (((self.cpsr >> 29) & 1) << 31) | (val >> 1);
+                        (result, c)
+                    } else {
+                        let c = (val >> ((offset - 1) % 32)) & 1;
+                        (val.rotate_right(offset), c)
+                    }
+                }
+                _ => (val, (self.cpsr >> 29) & 1),
             };
             self.r[rd] = result;
+            self.update_flags(result, carry, (result >> 31) & 1, false);
         }
     }
 
