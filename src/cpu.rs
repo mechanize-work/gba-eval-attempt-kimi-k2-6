@@ -777,7 +777,7 @@ impl Cpu {
             offset
         };
         let lr = self.r[14];
-        self.r[14] = self.r[15] | 1; // next instruction (r15 already at PC+4 in Thumb)
+        self.r[14] = self.r[15].wrapping_add(2) | 1; // next instruction, set bit0 to indicate ARM
         self.r[15] = ((lr & !1) as i32).wrapping_add(signed_off * 2) as u32;
     }
 
