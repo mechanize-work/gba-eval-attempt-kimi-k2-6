@@ -270,19 +270,98 @@ impl Cpu {
             0b000 => self.execute_thumb_0(opcode),
             0b001 => self.execute_thumb_1(opcode),
             0b010 => {
-                let sub = (opcode >> 11) & 3;
-                match sub {
-                    0b00 => self.execute_thumb_2(opcode),      // ALU reg
-                    0b01 => self.execute_thumb_5(opcode, bus), // LDR PC-rel
-                    0b10 | 0b11 => self.execute_thumb_3(opcode, bus), // LDR/STR reg offset
-                    _ => {}
+                let bit12 = (opcode >> 12) & 1;
+                if bit12 == 1 {
+                    // 0101xxx = LDR/STR register offset
+                    self.execute_thumb_3(opcode, bus);
+                } else {
+                    let bit11 = (opcode >> 11) & 1;
+                    if bit11 == 0 {
+                        let bit10 = (opcode >> 10) & 1;
+                        if bit10 == 0 {
+                            // 010000 = ALU register
+                            self.execute_thumb_2(opcode);
+                        } else {
+                            // 010001 = HI register / BX
+                            self.execute_thumb_4(opcode);
+                        }
+                    } else {
+                        // 01001 = LDR PC-relative
+                        let rd = ((opcode >> 8) & 7) as usize;
+                        let imm = ((opcode & 0xFF) as u32) << 2;
+                        // PC is instruction addr + 4, then aligned to word
+                        let pc_addr = ((self.r[15] + 2) & !3);
+                        let addr = pc_addr.wrapping_add(imm);
+                        self.r[rd] = bus.read32(addr & !3);
+                    }
                 }
             }
-            0b011 => self.execute_thumb_3(opcode, bus),
-            0b100 => self.execute_thumb_5(opcode, bus),
-            0b101 => self.execute_thumb_6(opcode, bus),
-            0b110 => self.execute_thumb_7(opcode),
-            0b111 => self.execute_thumb_8(opcode),
+            0b011 => {
+                // LDR/STR immediate offset word/byte
+                self.execute_thumb_ldr_str_imm(opcode, bus);
+            }
+            0b100 => {
+                let bit12 = (opcode >> 12) & 1;
+                if bit12 == 0 {
+                    // 1000 = halfword / sign-extended byte/halfword
+                    self.execute_thumb_halfword(opcode, bus);
+                } else {
+                    // 1001 = LDR/STR SP-relative
+                    self.execute_thumb_ldr_str_sp(opcode, bus);
+                }
+            }
+            0b101 => {
+                let bit11 = (opcode >> 11) & 1;
+                let bit10 = (opcode >> 10) & 1;
+                if bit11 == 0 {
+                    // 10100 = ADD Rd, PC, #imm
+                    // 10101 = ADD Rd, SP, #imm
+                    let rd = ((opcode >> 8) & 7) as usize;
+                    let imm = ((opcode & 0xFF) as u32) << 2;
+                    if bit10 == 0 {
+                        // ADD Rd, PC, #imm
+                        let pc_addr = (self.r[15] + 2) & !3;
+                        self.r[rd] = pc_addr.wrapping_add(imm);
+                    } else {
+                        // ADD Rd, SP, #imm
+                        self.r[rd] = self.r[13].wrapping_add(imm);
+                    }
+                } else {
+                    // PUSH / POP
+                    self.execute_thumb_push_pop(opcode, bus);
+                }
+            }
+            0b110 => {
+                let bit12 = (opcode >> 12) & 1;
+                if bit12 == 0 {
+                    // 1100 = LDMIA / STMIA
+                    self.execute_thumb_block(opcode, bus);
+                } else {
+                    // 1101 = conditional branch / SWI
+                    let cond = (opcode >> 8) & 0xF;
+                    if cond == 0xF {
+                        // SWI
+                    } else {
+                        // conditional branch
+                        let offset = (opcode & 0xFF) as i8;
+                        if self.check_condition_thumb(cond as u32) {
+                            self.r[15] = self.r[15].wrapping_add((offset as i32 * 2) as u32);
+                        }
+                    }
+                }
+            }
+            0b111 => {
+                let bit12 = (opcode >> 12) & 1;
+                if bit12 == 1 {
+                    // BL / BLX suffix
+                    self.execute_thumb_bl(opcode);
+                } else {
+                    // unconditional branch
+                    let offset = (opcode & 0x7FF) as i32;
+                    let signed = if (offset >> 10) & 1 == 1 { offset | !0x7FF } else { offset };
+                    self.r[15] = self.r[15].wrapping_add((signed * 2) as u32);
+                }
+            }
             _ => {}
         }
     }
