@@ -522,25 +522,137 @@ impl Cpu {
         let op = (opcode >> 6) & 0xF;
         let rs = ((opcode >> 3) & 7) as usize;
         let rd = (opcode & 7) as usize;
-        match op {
-            0b0000 => self.r[rd] = self.r[rd] & self.r[rs],
-            0b0001 => self.r[rd] = self.r[rd] ^ self.r[rs],
-            0b0010 => { let shift = self.r[rs] & 0xFF; self.r[rd] = if shift >= 32 { 0 } else { self.r[rd] << shift }; }
-            0b0011 => { let shift = self.r[rs] & 0xFF; self.r[rd] = if shift >= 32 { 0 } else { self.r[rd] >> shift }; }
-            0b0100 => { let shift = self.r[rs] & 0xFF; self.r[rd] = if shift >= 32 { if (self.r[rd] >> 31) & 1 == 1 { 0xFFFFFFFF } else { 0 } } else { ((self.r[rd] as i32) >> shift) as u32 }; }
-            0b0101 => { let c = (self.cpsr >> 29) & 1; self.r[rd] = self.r[rd].wrapping_add(self.r[rs]).wrapping_add(c); }
-            0b0110 => { let c = (self.cpsr >> 29) & 1; self.r[rd] = self.r[rd].wrapping_sub(self.r[rs]).wrapping_sub(1 - c); }
-            0b0111 => { let shift = self.r[rs] & 0xFF; self.r[rd] = if shift == 0 { self.r[rd] } else { self.r[rd].rotate_right(shift) }; }
-            0b1000 => { let result = self.r[rd] & self.r[rs]; self.update_flags(result, (self.cpsr >> 29) & 1, (result >> 31) & 1, false); }
-            0b1001 => self.r[rd] = 0u32.wrapping_sub(self.r[rs]),
-            0b1010 => { let result = self.r[rd].wrapping_sub(self.r[rs]); let carry = if self.r[rd] >= self.r[rs] { 1 } else { 0 }; let overflow = ((self.r[rd] ^ self.r[rs]) & (self.r[rd] ^ result)) >> 31 == 1; self.update_flags(result, carry, (result >> 31) & 1, overflow); }
-            0b1011 => { let result = self.r[rd].wrapping_add(self.r[rs]); let carry = if (self.r[rd] as u64 + self.r[rs] as u64) > 0xFFFFFFFF { 1 } else { 0 }; let overflow = ((self.r[rd] ^ result) & (self.r[rs] ^ result)) >> 31 == 1; self.update_flags(result, carry, (result >> 31) & 1, overflow); }
-            0b1100 => self.r[rd] = self.r[rd] | self.r[rs],
-            0b1101 => self.r[rd] = self.r[rd].wrapping_mul(self.r[rs]),
-            0b1110 => self.r[rd] = self.r[rd] & !self.r[rs],
-            0b1111 => self.r[rd] = !self.r[rs],
-            _ => {}
+        let a = self.r[rd];
+        let b = self.r[rs];
+        let (result, carry, overflow) = match op {
+            0b0000 => {
+                let r = a & b;
+                (r, (self.cpsr >> 29) & 1, false)
+            }
+            0b0001 => {
+                let r = a ^ b;
+                (r, (self.cpsr >> 29) & 1, false)
+            }
+            0b0010 => {
+                // LSL
+                let shift = b & 0xFF;
+                if shift == 0 {
+                    (a, (self.cpsr >> 29) & 1, false)
+                } else if shift < 32 {
+                    let c = (a >> (32 - shift)) & 1;
+                    let r = a << shift;
+                    (r, c, false)
+                } else if shift == 32 {
+                    (0, a & 1, false)
+                } else {
+                    (0, 0, false)
+                }
+            }
+            0b0011 => {
+                // LSR
+                let shift = b & 0xFF;
+                if shift == 0 {
+                    (a, (self.cpsr >> 29) & 1, false)
+                } else if shift < 32 {
+                    let c = (a >> (shift - 1)) & 1;
+                    let r = a >> shift;
+                    (r, c, false)
+                } else if shift == 32 {
+                    (0, (a >> 31) & 1, false)
+                } else {
+                    (0, 0, false)
+                }
+            }
+            0b0100 => {
+                // ASR
+                let shift = b & 0xFF;
+                if shift == 0 {
+                    (a, (self.cpsr >> 29) & 1, false)
+                } else if shift < 32 {
+                    let c = (a >> (shift - 1)) & 1;
+                    let r = ((a as i32) >> shift) as u32;
+                    (r, c, false)
+                } else {
+                    let c = (a >> 31) & 1;
+                    let r = if c == 1 { 0xFFFFFFFF } else { 0 };
+                    (r, c, false)
+                }
+            }
+            0b0101 => {
+                // ADC
+                let c_in = (self.cpsr >> 29) & 1;
+                let r = a.wrapping_add(b).wrapping_add(c_in);
+                let c = if (a as u64 + b as u64 + c_in as u64) > 0xFFFFFFFF { 1 } else { 0 };
+                let v = ((a ^ r) & (b ^ r)) >> 31 == 1;
+                (r, c, v)
+            }
+            0b0110 => {
+                // SBC
+                let c_in = (self.cpsr >> 29) & 1;
+                let r = a.wrapping_sub(b).wrapping_sub(1 - c_in);
+                let c = if a >= b + (1 - c_in) { 1 } else { 0 };
+                let v = ((a ^ b) & (a ^ r)) >> 31 == 1;
+                (r, c, v)
+            }
+            0b0111 => {
+                // ROR
+                let shift = b & 0xFF;
+                if shift == 0 {
+                    (a, (self.cpsr >> 29) & 1, false)
+                } else {
+                    let c = (a >> ((shift - 1) % 32)) & 1;
+                    let r = a.rotate_right(shift);
+                    (r, c, false)
+                }
+            }
+            0b1000 => {
+                // TST
+                let r = a & b;
+                (r, (self.cpsr >> 29) & 1, false)
+            }
+            0b1001 => {
+                // NEG
+                let r = 0u32.wrapping_sub(b);
+                let c = if b == 0 { 1 } else { 0 };
+                let v = ((0u32 ^ b) & (0u32 ^ r)) >> 31 == 1;
+                (r, c, v)
+            }
+            0b1010 => {
+                // CMP
+                let r = a.wrapping_sub(b);
+                let c = if a >= b { 1 } else { 0 };
+                let v = ((a ^ b) & (a ^ r)) >> 31 == 1;
+                (r, c, v)
+            }
+            0b1011 => {
+                // CMN
+                let r = a.wrapping_add(b);
+                let c = if (a as u64 + b as u64) > 0xFFFFFFFF { 1 } else { 0 };
+                let v = ((a ^ r) & (b ^ r)) >> 31 == 1;
+                (r, c, v)
+            }
+            0b1100 => {
+                let r = a | b;
+                (r, (self.cpsr >> 29) & 1, false)
+            }
+            0b1101 => {
+                let r = a.wrapping_mul(b);
+                (r, (self.cpsr >> 29) & 1, false)
+            }
+            0b1110 => {
+                let r = a & !b;
+                (r, (self.cpsr >> 29) & 1, false)
+            }
+            0b1111 => {
+                let r = !a;
+                (r, (self.cpsr >> 29) & 1, false)
+            }
+            _ => (a, (self.cpsr >> 29) & 1, false),
+        };
+        if op != 0b1000 && op != 0b1010 && op != 0b1011 {
+            self.r[rd] = result;
         }
+        self.update_flags(result, carry, (result >> 31) & 1, overflow);
     }
 
     fn execute_thumb_3(&mut self, opcode: u16, bus: &mut Bus) {
@@ -665,7 +777,7 @@ impl Cpu {
             offset
         };
         let lr = self.r[14];
-        self.r[14] = self.r[15].wrapping_add(2) | 1; // next instruction, set bit0 to indicate ARM
+        self.r[14] = self.r[15] | 1; // next instruction (r15 already at PC+4 in Thumb)
         self.r[15] = ((lr & !1) as i32).wrapping_add(signed_off * 2) as u32;
     }
 
