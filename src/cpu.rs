@@ -270,10 +270,12 @@ impl Cpu {
             0b000 => self.execute_thumb_0(opcode),
             0b001 => self.execute_thumb_1(opcode),
             0b010 => {
-                if ((opcode >> 10) & 1) == 0 {
-                    self.execute_thumb_2(opcode);
-                } else {
-                    self.execute_thumb_4(opcode);
+                let sub = (opcode >> 11) & 3;
+                match sub {
+                    0b00 => self.execute_thumb_2(opcode),      // ALU reg
+                    0b01 => self.execute_thumb_5(opcode, bus), // LDR PC-rel
+                    0b10 | 0b11 => self.execute_thumb_3(opcode, bus), // LDR/STR reg offset
+                    _ => {}
                 }
             }
             0b011 => self.execute_thumb_3(opcode, bus),
@@ -286,7 +288,6 @@ impl Cpu {
     }
 
     fn execute_thumb_0(&mut self, opcode: u16) {
-        eprintln!("execute_thumb_0 opcode={:04X}", opcode);
         if (opcode >> 11) & 3 == 3 {
             let rd = (opcode & 7) as usize;
             let rs = ((opcode >> 3) & 7) as usize;
@@ -294,7 +295,6 @@ impl Cpu {
             let i = (opcode >> 10) & 1;
             let sub = (opcode >> 9) & 1;
             let val = if i != 0 { rn_offset } else { self.r[rn_offset as usize] };
-            eprintln!("THUMB0 ADD/SUB rd={} rs={} rn={} i={} sub={} rs_val=0x{:08X} val=0x{:08X} -> 0x{:08X}", rd, rs, rn_offset, i, sub, self.r[rs], val, if sub != 0 { self.r[rs].wrapping_sub(val) } else { self.r[rs].wrapping_add(val) });
             if sub != 0 {
                 self.r[rd] = self.r[rs].wrapping_sub(val);
             } else {
@@ -305,7 +305,6 @@ impl Cpu {
             let rs = ((opcode >> 3) & 7) as usize;
             let offset = ((opcode >> 6) & 0x1F) as u32;
             let shift_type = (opcode >> 11) & 3;
-            eprintln!("THUMB0 SHIFT rd={} rs={} offset={} shift_type={} r_rs=0x{:08X}", rd, rs, offset, shift_type, self.r[rs]);
             let result = match shift_type {
                 0b00 => if offset == 0 { self.r[rs] } else { self.r[rs] << offset },
                 0b01 => if offset == 0 { 0 } else { self.r[rs] >> offset },
@@ -339,7 +338,6 @@ impl Cpu {
         let op = (opcode >> 6) & 0xF;
         let rs = ((opcode >> 3) & 7) as usize;
         let rd = ((opcode & 7) | ((opcode >> 4) & 8)) as usize;
-        eprintln!("THUMB2 op={} rs={} rd={} r_rs=0x{:08X} r_rd=0x{:08X}", op, rs, rd, self.r[rs], self.r[rd]);
         match op {
             0b0000 => self.r[rd] = self.r[rd] & self.r[rs],
             0b0001 => self.r[rd] = self.r[rd] ^ self.r[rs],
