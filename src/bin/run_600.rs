@@ -15,8 +15,6 @@ fn main() {
         let pc = emu_debug_pc();
         let fb = unsafe { std::slice::from_raw_parts(emu_framebuffer(), 240 * 160) };
         let nonblack = fb.iter().filter(|&&p| p != 0xFF000000).count();
-        if nonblack > 0 || (pc >= 0x08000100 && pc < 0x08000110) {
-            println!("frame {} PC=0x{:08X} nonblack={}", f, pc, nonblack);
-        }
+        println!("frame {} PC=0x{:08X} nonblack={}", f, pc, nonblack);
     }
 }
