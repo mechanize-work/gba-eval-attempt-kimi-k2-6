@@ -337,6 +337,7 @@ impl Cpu {
         let op = (opcode >> 6) & 0xF;
         let rs = ((opcode >> 3) & 7) as usize;
         let rd = ((opcode & 7) | ((opcode >> 4) & 8)) as usize;
+        eprintln!("THUMB2 op={} rs={} rd={} r_rs=0x{:08X} r_rd=0x{:08X}", op, rs, rd, self.r[rs], self.r[rd]);
         match op {
             0b0000 => self.r[rd] = self.r[rd] & self.r[rs],
             0b0001 => self.r[rd] = self.r[rd] ^ self.r[rs],
