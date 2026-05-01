@@ -181,7 +181,7 @@ impl Cpu {
             (op, format!("0x{:08X}", op))
         };
         
-        eprint!("PC=0x{:08X} r14=0x{:08X} cpsr=0x{:08X} ", pc, self.r[14], self.cpsr);
+        eprint!("PC=0x{:08X} r0=0x{:08X} r1=0x{:08X} r2=0x{:08X} r3=0x{:08X} r6=0x{:08X} r12=0x{:08X} lr=0x{:08X} cpsr=0x{:08X} ", pc, self.r[0], self.r[1], self.r[2], self.r[3], self.r[6], self.r[12], self.r[14], self.cpsr);
         
         let cycles = self.step(bus, _interrupts);
         

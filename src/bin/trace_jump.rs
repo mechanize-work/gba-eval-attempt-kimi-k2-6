@@ -10,28 +10,16 @@ fn main() {
     }
     emu_load_rom(rom_data.len() as i32);
 
-    let mut history: Vec<String> = Vec::new();
-    let mut saw_ewram = false;
-    for i in 0..10000 {
-        let pc = emu_debug_pc();
-        let line = format!("step {} PC=0x{:08X}", i, pc);
-        history.push(line);
-        if history.len() > 30 {
-            history.remove(0);
-        }
-        let in_ewram = pc >= 0x02000000 && pc < 0x03000000;
-        if in_ewram && !saw_ewram {
-            eprintln!("JUMP TO EWRAM detected!");
-            for h in &history {
-                eprintln!("{}", h);
-            }
-            saw_ewram = true;
-            // trace next 20
-            for _ in 0..20 {
-                emu_debug_step_trace();
-            }
-            break;
-        }
+    for _ in 0..20 {
         emu_debug_step_trace();
+    }
+    for i in 20..80 {
+        let pc = emu_debug_pc();
+        if i < 30 || pc >= 0x08000120 {
+            emu_debug_step_trace();
+        } else {
+            // skip trace for speed
+            emu_debug_step_trace();
+        }
     }
 }
