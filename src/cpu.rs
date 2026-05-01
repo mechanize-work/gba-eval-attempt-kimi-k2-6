@@ -387,13 +387,13 @@ impl Cpu {
                         // unconditional branch
                         let offset = (opcode & 0x7FF) as i32;
                         let signed = if (offset >> 10) & 1 == 1 { offset | !0x7FF } else { offset };
-                        self.r[15] = self.r[15].wrapping_add((signed * 2) as u32);
+                        self.r[15] = self.r[15].wrapping_add(2).wrapping_add((signed * 2) as u32);
                     }
                     0b11110 => {
                         // BL prefix
                         let offset = (opcode & 0x7FF) as i32;
                         let signed_off = if (offset >> 10) & 1 == 1 { offset | !0x7FF } else { offset };
-                        self.r[14] = self.r[15].wrapping_add((signed_off << 12) as u32);
+                        self.r[14] = self.r[15].wrapping_add(2).wrapping_add((signed_off << 12) as u32);
                     }
                     0b11111 => {
                         // BL suffix
@@ -645,7 +645,7 @@ impl Cpu {
             offset
         };
         let lr = self.r[14];
-        self.r[14] = self.r[15] | 1;
+        self.r[14] = self.r[15].wrapping_add(2) | 1; // next instruction, set bit0 to indicate ARM
         self.r[15] = ((lr & !1) as i32).wrapping_add(signed_off * 2) as u32;
     }
 
