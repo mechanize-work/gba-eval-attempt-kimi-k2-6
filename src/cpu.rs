@@ -286,6 +286,7 @@ impl Cpu {
     }
 
     fn execute_thumb_0(&mut self, opcode: u16) {
+        eprintln!("execute_thumb_0 opcode={:04X}", opcode);
         if (opcode >> 11) & 3 == 3 {
             let rd = (opcode & 7) as usize;
             let rs = ((opcode >> 3) & 7) as usize;
