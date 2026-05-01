@@ -257,7 +257,7 @@ impl Cpu {
     fn step_thumb(&mut self, bus: &mut Bus) -> u32 {
         let pc = self.r[15] & !1;
         let opcode = bus.read16(pc);
-        self.r[15] = pc + 4;
+        self.r[15] = pc + 2;
         self.execute_thumb(opcode, bus);
         self.r[15] = self.r[15] & !1;
         1
@@ -289,7 +289,7 @@ impl Cpu {
                         // 01001 = LDR PC-relative
                         let rd = ((opcode >> 8) & 7) as usize;
                         let imm = ((opcode & 0xFF) as u32) << 2;
-                        // PC is instruction addr + 4, then aligned to word
+                        // Thumb PC is instruction_addr + 4; r15 currently holds instruction+2
                         let pc_addr = ((self.r[15] + 2) & !3);
                         let addr = pc_addr.wrapping_add(imm);
                         self.r[rd] = bus.read32(addr & !3);
@@ -374,7 +374,8 @@ impl Cpu {
                         // conditional branch
                         let offset = (opcode & 0xFF) as i8;
                         if self.check_condition_thumb(cond as u32) {
-                            self.r[15] = self.r[15].wrapping_add((offset as i32 * 2) as u32);
+                            // PC is instruction_addr + 2; branch base is PC + 2 = instruction_addr + 4
+                            self.r[15] = self.r[15].wrapping_add(2).wrapping_add((offset as i32 * 2) as u32);
                         }
                     }
                 }
