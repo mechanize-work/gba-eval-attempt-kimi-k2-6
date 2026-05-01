@@ -293,6 +293,7 @@ impl Cpu {
             let i = (opcode >> 10) & 1;
             let sub = (opcode >> 9) & 1;
             let val = if i != 0 { rn_offset } else { self.r[rn_offset as usize] };
+            eprintln!("THUMB0 ADD/SUB rd={} rs={} rn={} i={} sub={} rs_val=0x{:08X} val=0x{:08X} -> 0x{:08X}", rd, rs, rn_offset, i, sub, self.r[rs], val, if sub != 0 { self.r[rs].wrapping_sub(val) } else { self.r[rs].wrapping_add(val) });
             if sub != 0 {
                 self.r[rd] = self.r[rs].wrapping_sub(val);
             } else {
